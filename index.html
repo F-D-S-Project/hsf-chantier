@@ -7814,6 +7814,13 @@ function BriefingsScreen({ data, zones, trades, companies, session }) {
   }
 
   function generateMessage(co, ivs) {
+    var E = {
+      wave:  String.fromCodePoint(0x1F44B),
+      pin:   String.fromCodePoint(0x1F4CD),
+      warn:  '\u26A0\uFE0F',
+      link:  String.fromCodePoint(0x1F517),
+      phone: String.fromCodePoint(0x1F4F1),
+    };
     var prenom = (co.contact || '').split(' ')[0] || co.name;
     var wd = weekOff === 0 ? 'cette semaine' : weekOff === 1 ? 'la semaine prochaine' : 'semaine du ' + fmtShort(week.start);
     var byZone = {};
@@ -7823,11 +7830,11 @@ function BriefingsScreen({ data, zones, trades, companies, session }) {
       byZone[zn].push(iv);
     });
     var lines = [];
-    lines.push('*Planify — HSF Av. Marceau* 🏗️');
+    lines.push('*Planify \u2014 HSF Av. Marceau*');
     lines.push('');
-    lines.push('Bonjour ' + prenom + ' 👋');
+    lines.push('Bonjour ' + prenom + ' ' + E.wave);
     lines.push('');
-    lines.push('Vos interventions ' + wd + ' :');
+    lines.push('Vos interventions ' + wd + '\u00a0:');
     Object.keys(byZone).forEach(function(zn) {
       var zivs = byZone[zn];
       var starts = zivs.map(function(iv) { return iv.start || ''; }).filter(Boolean).sort();
@@ -7835,30 +7842,30 @@ function BriefingsScreen({ data, zones, trades, companies, session }) {
       var dRange = '';
       if (starts.length) {
         var s = fmtDayShort(starts[0]);
-        var e = ends[0] && ends[0] !== starts[0] ? ' → ' + fmtDayShort(ends[0]) : '';
+        var e = ends[0] && ends[0] !== starts[0] ? ' \u2192 ' + fmtDayShort(ends[0]) : '';
         dRange = s + e;
       }
       lines.push('');
-      lines.push('📍 *' + zn + '*' + (dRange ? '  —  ' + dRange : ''));
+      lines.push(E.pin + ' *' + zn + '*' + (dRange ? '  \u2014  ' + dRange : ''));
       zivs.forEach(function(iv) {
         var num = iv.task_number ? '[' + iv.task_number + '] ' : '';
-        lines.push('   • ' + num + iv.task);
+        lines.push('   \u2022 ' + num + iv.task);
       });
     });
     var blocked = ivs.filter(function(iv) { return iv.status === 'bloque'; });
     if (blocked.length) {
       lines.push('');
-      lines.push('⚠️ *Point d’attention :* ' + blocked.length + ' tâche(s) bloquée(s) — merci de confirmer la situation.');
+      lines.push(E.warn + ' *Point d\u2019attention\u00a0:* ' + blocked.length + ' t\u00e2che(s) bloqu\u00e9e(s) \u2014 merci de confirmer la situation.');
     }
     var prereq = ivs.filter(function(iv) { return iv.prereq && iv.prereq_company; });
     if (prereq.length) {
       lines.push('');
       prereq.forEach(function(iv) {
-        lines.push('🔗 *Prérequis :* ' + iv.prereq_company + ' doit intervenir avant vous sur cette zone.');
+        lines.push(E.link + ' *Pr\u00e9requis\u00a0:* ' + iv.prereq_company + ' doit intervenir avant vous sur cette zone.');
       });
     }
     lines.push('');
-    lines.push('🚧 Le chantier avance avec l’ensemble des équipes, donc si tu as le moindre souci pour tenir une de ces interventions, merci de prévenir Franck au plus vite 📲');
+    lines.push(E.warn + ' Le chantier avance avec l\u2019ensemble des \u00e9quipes, donc si tu as le moindre souci pour tenir une de ces interventions, merci de pr\u00e9venir Franck au plus vite ' + E.phone);
     return lines.join('\n');
   }
 
@@ -7978,7 +7985,12 @@ function BriefingsScreen({ data, zones, trades, companies, session }) {
         var isOpen  = expanded === id;
         var msg     = generateMessage(co, ivs);
         var waNum   = fmtPhoneWA(co.phone || '');
-        var waLink  = waNum ? 'https://wa.me/' + waNum + '?text=' + encodeURIComponent(msg) : null;
+        var _waText = msg.split('').map(function(ch){
+          var c = ch.charCodeAt(0);
+          if (c <= 0x7E && !/[A-Za-z0-9\-_.!~*'()]/.test(ch)) return encodeURIComponent(ch);
+          return ch;
+        }).join('');
+        var waLink  = waNum ? 'https://wa.me/' + waNum + '?text=' + _waText : null;
         var smsLink = co.phone ? 'sms:' + co.phone.replace(/\s/g,'') + '?body=' + encodeURIComponent(msg) : null;
         var mailLink = co.email ? 'mailto:' + co.email
           + '?subject=' + encodeURIComponent('Planning HSF — ' + weekLabel)
