@@ -8055,9 +8055,9 @@ function BriefingsScreen({ data, zones, trades, companies, session }) {
   (companies||[]).forEach(function(co){
     var ivs=(data||[]).filter(function(iv){
       var nameOk=iv.company===co.name;
-      // Only enforce trade split when >=2 company entries share the same name
-      var siblings=(companies||[]).filter(function(c){return c.name===co.name;}).length;
-      var tradeOk=!co.tradeId||siblings<=1||iv.trade_id===co.tradeId;
+      // Show all company tasks to all company contacts.
+      // trade_id filter only applies when BOTH sides have it set.
+      var tradeOk=!co.tradeId||!iv.trade_id||iv.trade_id===co.tradeId;
       return nameOk&&tradeOk&&iv.status!=='termine'&&overlapsWeek(iv);
     });
     if(!ivs.length) return;
