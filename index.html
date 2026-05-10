@@ -5559,6 +5559,9 @@ function SettingsScreen({ zones, trades, companies, setZones, setTrades, setComp
       .replace(/^_+|_+$/g,'') || ('co_'+Date.now().toString(36));
   }
   function normalizeCompany(c) {
+    var rawContacts = c.contacts;
+    var contacts = Array.isArray(rawContacts) ? rawContacts
+      : (typeof rawContacts === 'string' && rawContacts ? JSON.parse(rawContacts) : []);
     return {
       id:c.id || slugCompanyId(c.name),
       name:(c.name||'').trim(),
@@ -5566,11 +5569,13 @@ function SettingsScreen({ zones, trades, companies, setZones, setTrades, setComp
       phone:(c.phone||'').trim(),
       email:(c.email||'').trim(),
       code:String(c.code||'').trim(),
-      tradeId:c.tradeId || c.trade_id || ''
+      tradeId:c.tradeId || c.trade_id || '',
+      contacts: contacts
     };
   }
+  }
   function companyRow(c) {
-    return {id:c.id,name:c.name,contact:c.contact||'',phone:c.phone||'',email:c.email||'',code:c.code||'',trade_id:c.tradeId||null};
+    return {id:c.id,name:c.name,contact:c.contact||'',phone:c.phone||'',email:c.email||'',code:c.code||'',trade_id:c.tradeId||null,contacts:c.contacts||[]};
   }
   function saveZone(z) {
     var savedZone = Object.assign({}, z, {floor_color:normalizeFloorColorValue(z.floor_color) || floorColorValue(z.floor)});
@@ -5897,6 +5902,18 @@ function SettingsScreen({ zones, trades, companies, setZones, setTrades, setComp
                         <option value="">Lot / corps de métier…</option>
                         {trades.map(t=><option key={t.id} value={t.id}>{t.name}</option>)}
                       </select>
+                    </div>
+                    {/* Contacts supplémentaires */}
+                    <div style={{borderTop:'1px solid var(--border)',paddingTop:8}}>
+                      <div style={{fontSize:11,fontWeight:700,color:'var(--muted)',textTransform:'uppercase',letterSpacing:'.05em',marginBottom:6}}>Contacts supplémentaires</div>
+                      {(editingCompany.contacts||[]).map((ct,ci)=>(
+                        <div key={ci} style={{display:'grid',gridTemplateColumns:'1fr 1fr auto',gap:6,marginBottom:5}}>
+                          <input value={ct.name||''} onChange={e=>{var cs=[...(editingCompany.contacts||[])];cs[ci]={...cs[ci],name:e.target.value};setEditingCompany({...editingCompany,contacts:cs});}} style={inputSt} placeholder="Prénom Nom"/>
+                          <input value={ct.phone||''} onChange={e=>{var cs=[...(editingCompany.contacts||[])];cs[ci]={...cs[ci],phone:e.target.value};setEditingCompany({...editingCompany,contacts:cs});}} style={inputSt} placeholder="Téléphone" type="tel"/>
+                          <button onClick={()=>{var cs=(editingCompany.contacts||[]).filter((_,j)=>j!==ci);setEditingCompany({...editingCompany,contacts:cs});}} style={{...miniBtn,background:'var(--danger-l)',color:'var(--danger)',border:'none',minWidth:28,padding:'0 6px'}}>✕</button>
+                        </div>
+                      ))}
+                      <button onClick={()=>setEditingCompany({...editingCompany,contacts:[...(editingCompany.contacts||[]),{name:'',phone:'',email:''}]})} style={{...miniBtn,fontSize:11}}>+ Contact</button>
                     </div>
                     <div style={{display:'flex',gap:6}}>
                       <button onClick={()=>saveCompany(editingCompany)} style={{...miniBtn,flex:1}}>Enregistrer</button>
@@ -7758,16 +7775,26 @@ function BriefIcon() {
 }
 
 function BriefingsScreen({ data, zones, trades, companies, session }) {
-  const [weekOff, setWeekOff] = useState(1);
-  const [expanded, setExpanded] = useState(null);
-  const [copied, setCopied] = useState(null);
+  const [weekOff,    setWeekOff]    = useState(1);
+  const [expanded,   setExpanded]   = useState(null);
+  const [copied,     setCopied]     = useState(null);
+  const [recapOpen,  setRecapOpen]  = useState(false);
+  const [recapCopied,setRecapCopied]= useState(false);
+  const [addingSH,   setAddingSH]   = useState(false);
+  const [newSH,      setNewSH]      = useState({name:'', phone:''});
+  const [stakeholders, setStakeholders] = useState(function() {
+    try { return JSON.parse(localStorage.getItem('planify_stakeholders') || '[]'); }
+    catch(e) { return []; }
+  });
   const [sentStatus, setSentStatus] = useState(function() {
     try { return JSON.parse(localStorage.getItem('planify_briefings_sent') || '{}'); }
     catch(e) { return {}; }
   });
 
-  const FR_DAYS  = ['Dim','Lun','Mar','Mer','Jeu','Ven','Sam'];
-  const FR_MNTHS = ['jan.','fév.','mar.','avr.','mai','juin','juil.','aoû.','sep.','oct.','nov.','déc.'];
+  const FR_DAYS      = ['\u0044im','\u004cun','\u004dar','\u004der','\u004aeu','\u0056en','\u0053am'];
+  const FR_DAYS_FULL = ['Dimanche','Lundi','Mardi','Mercredi','Jeudi','Vendredi','Samedi'];
+  const FR_MNTHS     = ['jan.','f\u00e9v.','mar.','avr.','mai','juin','juil.','ao\u00fb.','sep.','oct.','nov.','d\u00e9c.'];
+  const FR_MNTHS_FULL= ['janvier','f\u00e9vrier','mars','avril','mai','juin','juillet','ao\u00fbt','septembre','octobre','novembre','d\u00e9cembre'];
 
   function fmtShort(ds) {
     if (!ds) return '';
@@ -7779,41 +7806,56 @@ function BriefingsScreen({ data, zones, trades, companies, session }) {
     var d = new Date(ds + 'T00:00:00');
     return FR_DAYS[d.getDay()] + ' ' + d.getDate();
   }
-  function getWeek(offset) {
-    var today = new Date();
-    var dow = today.getDay();
-    var monday = new Date(today);
-    monday.setDate(today.getDate() - (dow === 0 ? 6 : dow - 1) + offset * 7);
-    monday.setHours(0, 0, 0, 0);
-    var friday = new Date(monday);
-    friday.setDate(monday.getDate() + 4);
-    function ds(d) { return d.toISOString().slice(0, 10); }
-    return { start: ds(monday), end: ds(friday) };
+  function fmtFull(ds) {
+    if (!ds) return '';
+    var d = new Date(ds + 'T00:00:00');
+    return FR_DAYS_FULL[d.getDay()] + ' ' + d.getDate() + ' ' + FR_MNTHS_FULL[d.getMonth()];
   }
-
+  function getWeek(offset) {
+    var today = new Date(), dow = today.getDay();
+    var mon = new Date(today);
+    mon.setDate(today.getDate() - (dow===0?6:dow-1) + offset*7);
+    mon.setHours(0,0,0,0);
+    var fri = new Date(mon); fri.setDate(mon.getDate()+4);
+    function ds(d){ return d.toISOString().slice(0,10); }
+    return {start:ds(mon), end:ds(fri)};
+  }
   var week = getWeek(weekOff);
-  var weekLabel = weekOff === 0 ? 'Cette semaine' : weekOff === 1 ? 'Semaine prochaine' : 'Dans ' + weekOff + ' sem.';
+  var weekLabel = weekOff===0?'Cette semaine':weekOff===1?'Semaine prochaine':'Dans '+weekOff+' sem.';
 
   function overlapsWeek(iv) {
-    var s = iv.start || '';
-    var e = iv.end || s;
-    return s <= week.end && e >= week.start;
+    var s=iv.start||'', e=iv.end||s;
+    return s<=week.end && e>=week.start;
+  }
+  function overlapsDay(iv, dayStr) {
+    var s=iv.start||'', e=iv.end||s;
+    return s<=dayStr && e>=dayStr;
   }
   function getZoneName(zoneId) {
-    var z = (zones || []).find(function(z) { return z.id === zoneId; });
-    if (!z) return zoneId || '—';
-    return (z.floor ? z.floor + ' / ' : '') + z.name;
+    var z=(zones||[]).find(function(z){return z.id===zoneId;});
+    if (!z) return zoneId||'\u2014';
+    return (z.floor?z.floor+' / ':'')+z.name;
   }
   function fmtPhoneWA(phone) {
     if (!phone) return '';
-    var p = String(phone).replace(/\s/g, '').replace(/[^\d+]/g, '');
-    if (p.startsWith('00')) p = '+' + p.slice(2);
-    else if (p.startsWith('0')) p = '+33' + p.slice(1);
-    else if (!p.startsWith('+')) p = '+33' + p;
-    return p.replace('+', '');
+    var p=String(phone).replace(/\s/g,'').replace(/[^\d+]/g,'');
+    if (p.startsWith('00')) p='+'+p.slice(2);
+    else if (p.startsWith('0')) p='+33'+p.slice(1);
+    else if (!p.startsWith('+')) p='+33'+p;
+    return p.replace('+','');
+  }
+  function waUrl(phone, msg) {
+    var num = fmtPhoneWA(phone);
+    if (!num) return null;
+    var txt = msg.split('').map(function(ch){
+      var c=ch.charCodeAt(0);
+      return (c<=0x7E && !/[A-Za-z0-9\-_.!~*'()]/.test(ch)) ? encodeURIComponent(ch) : ch;
+    }).join('');
+    return 'https://wa.me/'+num+'?text='+txt;
   }
 
-  function generateMessage(co, ivs) {
+  // ── Message par contact ──────────────────────────────────
+  function generateMessage(contact, co, ivs) {
     var E = {
       wave:  String.fromCodePoint(0x1F44B),
       pin:   String.fromCodePoint(0x1F4CD),
@@ -7821,293 +7863,244 @@ function BriefingsScreen({ data, zones, trades, companies, session }) {
       link:  String.fromCodePoint(0x1F517),
       phone: String.fromCodePoint(0x1F4F1),
     };
-    var prenom = (co.contact || '').split(' ')[0] || co.name;
-    var wd = weekOff === 0 ? 'cette semaine' : weekOff === 1 ? 'la semaine prochaine' : 'semaine du ' + fmtShort(week.start);
-    var byZone = {};
-    ivs.forEach(function(iv) {
-      var zn = getZoneName(iv.zone);
-      if (!byZone[zn]) byZone[zn] = [];
+    var prenom=(contact.name||'').split(' ')[0]||co.name;
+    var wd=weekOff===0?'cette semaine':weekOff===1?'la semaine prochaine':'semaine du '+fmtShort(week.start);
+    var byZone={};
+    ivs.forEach(function(iv){
+      var zn=getZoneName(iv.zone);
+      if(!byZone[zn]) byZone[zn]=[];
       byZone[zn].push(iv);
     });
-    var lines = [];
-    lines.push('*Planify \u2014 HSF Av. Marceau*');
-    lines.push('');
-    lines.push('Bonjour ' + prenom + ' ' + E.wave);
-    lines.push('');
-    lines.push('Vos interventions ' + wd + '\u00a0:');
-    Object.keys(byZone).forEach(function(zn) {
-      var zivs = byZone[zn];
-      var starts = zivs.map(function(iv) { return iv.start || ''; }).filter(Boolean).sort();
-      var ends   = zivs.map(function(iv) { return iv.end || iv.start || ''; }).filter(Boolean).sort().reverse();
-      var dRange = '';
-      if (starts.length) {
-        var s = fmtDayShort(starts[0]);
-        var e = ends[0] && ends[0] !== starts[0] ? ' \u2192 ' + fmtDayShort(ends[0]) : '';
-        dRange = s + e;
+    var L=[];
+    L.push('*Planify \u2014 HSF Av. Marceau*');
+    L.push('');
+    L.push('Bonjour '+prenom+' '+E.wave);
+    L.push('');
+    L.push('Vos interventions '+wd+'\u00a0:');
+    Object.keys(byZone).forEach(function(zn){
+      var zivs=byZone[zn];
+      var starts=zivs.map(function(iv){return iv.start||'';}).filter(Boolean).sort();
+      var ends  =zivs.map(function(iv){return iv.end||iv.start||'';}).filter(Boolean).sort().reverse();
+      var dRange='';
+      if(starts.length){
+        var s=fmtDayShort(starts[0]);
+        var e=ends[0]&&ends[0]!==starts[0]?' \u2192 '+fmtDayShort(ends[0]):'';
+        dRange=s+e;
       }
-      lines.push('');
-      lines.push(E.pin + ' *' + zn + '*' + (dRange ? '  \u2014  ' + dRange : ''));
-      zivs.forEach(function(iv) {
-        var num = iv.task_number ? '[' + iv.task_number + '] ' : '';
-        lines.push('   \u2022 ' + num + iv.task);
+      L.push('');
+      L.push(E.pin+' *'+zn+'*'+(dRange?'  \u2014  '+dRange:''));
+      zivs.forEach(function(iv){
+        var num=iv.task_number?'['+iv.task_number+'] ':'';
+        L.push('   \u2022 '+num+iv.task);
       });
     });
-    var blocked = ivs.filter(function(iv) { return iv.status === 'bloque'; });
-    if (blocked.length) {
-      lines.push('');
-      lines.push(E.warn + ' *Point d\u2019attention\u00a0:* ' + blocked.length + ' t\u00e2che(s) bloqu\u00e9e(s) \u2014 merci de confirmer la situation.');
+    var blocked=ivs.filter(function(iv){return iv.status==='bloque';});
+    if(blocked.length){
+      L.push('');
+      L.push(E.warn+' *Point d\u2019attention\u00a0:* '+blocked.length+' t\u00e2che(s) bloqu\u00e9e(s) \u2014 merci de confirmer la situation.');
     }
-    var prereq = ivs.filter(function(iv) { return iv.prereq && iv.prereq_company; });
-    if (prereq.length) {
-      lines.push('');
-      prereq.forEach(function(iv) {
-        lines.push(E.link + ' *Pr\u00e9requis\u00a0:* ' + iv.prereq_company + ' doit intervenir avant vous sur cette zone.');
+    var prereq=ivs.filter(function(iv){return iv.prereq&&iv.prereq_company;});
+    if(prereq.length){
+      L.push('');
+      prereq.forEach(function(iv){
+        L.push(E.link+' *Pr\u00e9requis\u00a0:* '+iv.prereq_company+' doit intervenir avant vous sur cette zone.');
       });
     }
-    lines.push('');
-    lines.push(E.warn + ' Le chantier avance avec l\u2019ensemble des \u00e9quipes, donc si tu as le moindre souci pour tenir une de ces interventions, merci de pr\u00e9venir Franck au plus vite ' + E.phone);
-    return lines.join('\n');
+    L.push('');
+    L.push(E.warn+' Le chantier avance avec l\u2019ensemble des \u00e9quipes, donc si tu as le moindre souci pour tenir une de ces interventions, merci de me pr\u00e9venir au plus vite '+E.phone);
+    return L.join('\n');
   }
 
-  function sentKey(id) { return id + '_' + week.start; }
-  function markSent(id) {
-    var k = sentKey(id);
-    var next = Object.assign({}, sentStatus);
-    next[k] = new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
-    setSentStatus(next);
-    try { localStorage.setItem('planify_briefings_sent', JSON.stringify(next)); } catch(e) {}
-  }
-  function doCopy(text, id) {
-    var finish = function() {
-      setCopied(id); markSent(id);
-      setTimeout(function() { setCopied(null); }, 2400);
+  // ── Récap projet ─────────────────────────────────────────
+  function generateRecap() {
+    var E2 = {
+      cal:  String.fromCodePoint(0x1F4C5),
+      pin:  String.fromCodePoint(0x1F4CD),
     };
-    if (navigator.clipboard && navigator.clipboard.writeText) {
-      navigator.clipboard.writeText(text).then(finish).catch(function() {
-        var ta = document.createElement('textarea');
-        ta.value = text; document.body.appendChild(ta); ta.select();
-        document.execCommand('copy'); document.body.removeChild(ta); finish();
+    var L=[];
+    L.push('*R\u00e9cap chantier HSF*');
+    L.push('Semaine du '+fmtShort(week.start)+' au '+fmtShort(week.end));
+    L.push('');
+    var ivIds={}, coSet={};
+    for(var di=0;di<5;di++){
+      var d=new Date(week.start+'T00:00:00');
+      d.setDate(d.getDate()+di);
+      var dayStr=d.toISOString().slice(0,10);
+      var dayIvs=(data||[]).filter(function(iv){
+        return iv.status!=='termine' && overlapsDay(iv,dayStr);
       });
-    } else {
-      var ta = document.createElement('textarea');
-      ta.value = text; document.body.appendChild(ta); ta.select();
-      document.execCommand('copy'); document.body.removeChild(ta); finish();
+      if(!dayIvs.length) continue;
+      dayIvs.forEach(function(iv){ivIds[iv.id]=true; coSet[iv.company]=true;});
+      L.push(E2.cal+' *'+fmtFull(dayStr)+'*');
+      var byZone={};
+      dayIvs.forEach(function(iv){
+        var zn=getZoneName(iv.zone);
+        if(!byZone[zn]) byZone[zn]=[];
+        byZone[zn].push(iv);
+      });
+      Object.keys(byZone).sort().forEach(function(zn){
+        L.push('  '+E2.pin+' '+zn);
+        byZone[zn].forEach(function(iv){
+          var num=iv.task_number?'['+iv.task_number+'] ':'';
+          var co=(companies||[]).find(function(c){return c.name===iv.company;});
+          var ct=co&&co.contact?' ('+co.contact.split(' ')[0]+')':'';
+          L.push('    \u2022 '+iv.company+ct+' \u2014 '+num+iv.task);
+        });
+      });
+      L.push('');
     }
+    var nbCo=Object.keys(coSet).length, nbIv=Object.keys(ivIds).length;
+    if(nbIv===0) L.push('Aucune intervention planifi\u00e9e cette semaine.');
+    else L.push(nbCo+' entreprise'+(nbCo>1?'s':'')+' \u00b7 '+nbIv+' intervention'+(nbIv>1?'s':''));
+    return L.join('\n');
   }
 
-  var companyCards = [];
-  (companies || []).forEach(function(co) {
-    var ivs = (data || []).filter(function(iv) {
-      var nameOk  = iv.company === co.name;
-      var tradeOk = !co.tradeId || !iv.trade_id || iv.trade_id === co.tradeId;
-      return nameOk && tradeOk && iv.status !== 'termine' && overlapsWeek(iv);
+  // ── Utilitaires ──────────────────────────────────────────
+  function sentKey(cardId){ return cardId+'_'+week.start; }
+  function markSent(cardId){
+    var k=sentKey(cardId), next=Object.assign({},sentStatus);
+    next[k]=new Date().toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'});
+    setSentStatus(next);
+    try{localStorage.setItem('planify_briefings_sent',JSON.stringify(next));}catch(e){}
+  }
+  function doCopy(text,cardId){
+    var finish=function(){setCopied(cardId);markSent(cardId);setTimeout(function(){setCopied(null);},2400);};
+    if(navigator.clipboard&&navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(finish).catch(function(){var ta=document.createElement('textarea');ta.value=text;document.body.appendChild(ta);ta.select();document.execCommand('copy');document.body.removeChild(ta);finish();});
+    else{var ta=document.createElement('textarea');ta.value=text;document.body.appendChild(ta);ta.select();document.execCommand('copy');document.body.removeChild(ta);finish();}
+  }
+  function doRecapCopy(text){
+    var finish=function(){setRecapCopied(true);setTimeout(function(){setRecapCopied(false);},2400);};
+    if(navigator.clipboard&&navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(finish).catch(function(){var ta=document.createElement('textarea');ta.value=text;document.body.appendChild(ta);ta.select();document.execCommand('copy');document.body.removeChild(ta);finish();});
+    else{var ta=document.createElement('textarea');ta.value=text;document.body.appendChild(ta);ta.select();document.execCommand('copy');document.body.removeChild(ta);finish();}
+  }
+  function saveSH(list){
+    setStakeholders(list);
+    try{localStorage.setItem('planify_stakeholders',JSON.stringify(list));}catch(e){}
+  }
+  function addSH(){
+    if(!newSH.name&&!newSH.phone) return;
+    saveSH([...stakeholders,{name:newSH.name,phone:newSH.phone}]);
+    setNewSH({name:'',phone:''});
+    setAddingSH(false);
+  }
+  function removeSH(i){ saveSH(stakeholders.filter(function(_,j){return j!==i;})); }
+
+  // ── Construction des cartes (1 par contact) ───────────────
+  var companyCards=[];
+  (companies||[]).forEach(function(co){
+    var ivs=(data||[]).filter(function(iv){
+      var nameOk=iv.company===co.name;
+      var tradeOk=!co.tradeId||!iv.trade_id||iv.trade_id===co.tradeId;
+      return nameOk&&tradeOk&&iv.status!=='termine'&&overlapsWeek(iv);
     });
-    if (ivs.length > 0) companyCards.push({ co: co, ivs: ivs });
+    if(!ivs.length) return;
+    var allCt=[];
+    if(co.contact||co.phone) allCt.push({name:co.contact||'',phone:co.phone||'',email:co.email||'',primary:true});
+    (co.contacts||[]).forEach(function(c){if(c.name||c.phone) allCt.push({name:c.name||'',phone:c.phone||'',email:c.email||'',primary:false});});
+    if(!allCt.length) allCt.push({name:'',phone:'',email:'',primary:true});
+    allCt.forEach(function(ct,ci){
+      companyCards.push({co:co, contact:ct, cardId:co.id+'_c'+ci, ivs:ivs});
+    });
   });
 
-  var totalTasks    = companyCards.reduce(function(s, x) { return s + x.ivs.length; }, 0);
-  var totalSent     = companyCards.filter(function(x) { return !!sentStatus[sentKey(x.co.id)]; }).length;
-  var totalBlocked  = companyCards.reduce(function(s, x) {
-    return s + x.ivs.filter(function(iv) { return iv.status === 'bloque'; }).length;
-  }, 0);
+  var totalSent=companyCards.filter(function(x){return !!sentStatus[sentKey(x.cardId)];}).length;
+  var totalBlocked=companyCards.reduce(function(s,x){return s+x.ivs.filter(function(iv){return iv.status==='bloque';}).length;},0);
+  var totalTasks=companyCards.reduce(function(s,x){return s+x.ivs.length;},0);
 
-  var btnSt = {
-    display: 'inline-flex', alignItems: 'center', gap: 5,
-    padding: '6px 12px', borderRadius: 'var(--r-xs)',
-    fontSize: 12, fontWeight: 700, cursor: 'pointer',
-    fontFamily: "'DM Sans',sans-serif", textDecoration: 'none',
-    border: '1px solid var(--border)', background: 'transparent', color: 'var(--text)'
-  };
+  // ── Styles locaux ────────────────────────────────────────
+  var btnSt={display:'inline-flex',alignItems:'center',gap:5,padding:'6px 12px',borderRadius:'var(--r-xs)',fontSize:12,fontWeight:700,cursor:'pointer',fontFamily:"'DM Sans',sans-serif",textDecoration:'none',border:'1px solid var(--border)',background:'transparent',color:'var(--text)'};
+  var inpSt={padding:'6px 8px',borderRadius:'var(--r-xs)',border:'1px solid var(--border)',background:'var(--surface)',color:'var(--text)',fontSize:12,fontFamily:"'DM Sans',sans-serif",outline:'none'};
+  var preSt={fontFamily:"'DM Sans',sans-serif",fontSize:12.5,color:'var(--text)',lineHeight:1.7,whiteSpace:'pre-wrap',wordBreak:'break-word',margin:0,background:'var(--surface)',border:'1px solid var(--border)',borderRadius:'var(--r-xs)',padding:'14px 16px',overflowY:'auto'};
 
   return (
-    <div style={{ height: '100%', overflowY: 'auto', padding: '16px 14px 100px' }}>
+    <div style={{height:'100%',overflowY:'auto',padding:'16px 14px 100px'}}>
 
-      {/* Header */}
-      <div style={{ marginBottom: 14 }}>
-        <div style={{ fontSize: 18, fontWeight: 700, color: 'var(--text)', marginBottom: 3 }}>Fiches de mission</div>
-        <div style={{ fontSize: 13, color: 'var(--muted)', lineHeight: 1.45 }}>
-          Générez et envoyez les briefings hebdomadaires. Copiez le message ou ouvrez directement WhatsApp.
-        </div>
+      {/* ── Header ── */}
+      <div style={{marginBottom:14}}>
+        <div style={{fontSize:18,fontWeight:700,color:'var(--text)',marginBottom:3}}>Fiches de mission</div>
+        <div style={{fontSize:13,color:'var(--muted)',lineHeight:1.45}}>Briefings hebdomadaires + r\u00e9cap projet pour vos parties prenantes.</div>
       </div>
 
-      {/* Week selector */}
-      <div style={{ display: 'flex', gap: 6, marginBottom: 12 }}>
-        {[0, 1, 2].map(function(o) {
-          var lbl = o === 0 ? 'Cette semaine' : o === 1 ? 'Sem. prochaine' : 'Dans 2 sem.';
-          var active = weekOff === o;
-          return (
-            <button key={o} onClick={function() { setWeekOff(o); setExpanded(null); }}
-              style={{ ...btnSt, flex: 1, justifyContent: 'center',
-                background: active ? 'var(--primary)' : 'transparent',
-                color: active ? '#fff' : 'var(--text)',
-                border: active ? '1px solid var(--primary)' : '1px solid var(--border)' }}>
-              {lbl}
-            </button>
-          );
+      {/* ── Semaine ── */}
+      <div style={{display:'flex',gap:6,marginBottom:12}}>
+        {[0,1,2].map(function(o){
+          var lbl=o===0?'Cette semaine':o===1?'Sem. prochaine':'Dans 2 sem.';
+          var active=weekOff===o;
+          return <button key={o} onClick={function(){setWeekOff(o);setExpanded(null);}}
+            style={{...btnSt,flex:1,justifyContent:'center',background:active?'var(--primary)':'transparent',color:active?'#fff':'var(--text)',border:active?'1px solid var(--primary)':'1px solid var(--border)'}}>{lbl}</button>;
         })}
       </div>
 
-      {/* Week stats bar */}
-      <div style={{ display: 'flex', gap: 8, marginBottom: 18 }}>
-        {[
-          { v: companyCards.length, l: 'entreprises', c: 'var(--text)' },
-          { v: totalTasks,          l: 'tâches',      c: 'var(--primary)' },
-          { v: totalBlocked,        l: 'bloquées',    c: totalBlocked > 0 ? 'var(--danger)' : 'var(--muted)' },
-          { v: totalSent,           l: 'envoyées',    c: 'var(--success)' },
-        ].map(function(s) {
-          return (
-            <div key={s.l} style={{ flex: 1, background: 'var(--surface-2)', border: '1px solid var(--border)',
-              borderRadius: 'var(--r-sm)', padding: '8px 10px', textAlign: 'center' }}>
-              <div style={{ fontSize: 18, fontWeight: 800, color: s.c }}>{s.v}</div>
-              <div style={{ fontSize: 10, color: 'var(--muted)', marginTop: 1 }}>{s.l}</div>
-            </div>
-          );
+      {/* ── Stats ── */}
+      <div style={{display:'flex',gap:8,marginBottom:18}}>
+        {[{v:companyCards.length,l:'contacts',c:'var(--text)'},{v:totalTasks,l:'t\u00e2ches',c:'var(--primary)'},{v:totalBlocked,l:'bloqu\u00e9es',c:totalBlocked>0?'var(--danger)':'var(--muted)'},{v:totalSent,l:'envoy\u00e9es',c:'var(--success)'}].map(function(s){
+          return <div key={s.l} style={{flex:1,background:'var(--surface-2)',border:'1px solid var(--border)',borderRadius:'var(--r-sm)',padding:'8px 10px',textAlign:'center'}}>
+            <div style={{fontSize:18,fontWeight:800,color:s.c}}>{s.v}</div>
+            <div style={{fontSize:10,color:'var(--muted)',marginTop:1}}>{s.l}</div>
+          </div>;
         })}
       </div>
 
-      {/* Caption */}
-      <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase',
-        letterSpacing: '.06em', marginBottom: 10 }}>
-        {weekLabel} · {fmtShort(week.start)} → {fmtShort(week.end)}
+      <div style={{fontSize:10,fontWeight:700,color:'var(--muted)',textTransform:'uppercase',letterSpacing:'.06em',marginBottom:10}}>
+        {weekLabel} \u00b7 {fmtShort(week.start)} \u2192 {fmtShort(week.end)}
       </div>
 
-      {/* Empty state */}
-      {companyCards.length === 0 && (
-        <div style={{ textAlign: 'center', padding: '44px 20px', color: 'var(--muted)', fontSize: 14 }}>
-          Aucune intervention planifiée pour cette période.
-        </div>
-      )}
+      {companyCards.length===0&&<div style={{textAlign:'center',padding:'44px 20px',color:'var(--muted)',fontSize:14}}>Aucune intervention planifi\u00e9e pour cette p\u00e9riode.</div>}
 
-      {/* Company cards */}
-      {companyCards.map(function(item) {
-        var co = item.co, ivs = item.ivs;
-        var id = co.id;
-        var isOpen  = expanded === id;
-        var msg     = generateMessage(co, ivs);
-        var waNum   = fmtPhoneWA(co.phone || '');
-        var _waText = msg.split('').map(function(ch){
-          var c = ch.charCodeAt(0);
-          if (c <= 0x7E && !/[A-Za-z0-9\-_.!~*'()]/.test(ch)) return encodeURIComponent(ch);
-          return ch;
-        }).join('');
-        var waLink  = waNum ? 'https://wa.me/' + waNum + '?text=' + _waText : null;
-        var smsLink = co.phone ? 'sms:' + co.phone.replace(/\s/g,'') + '?body=' + encodeURIComponent(msg) : null;
-        var mailLink = co.email ? 'mailto:' + co.email
-          + '?subject=' + encodeURIComponent('Planning HSF — ' + weekLabel)
-          + '&body=' + encodeURIComponent(msg) : null;
-        var isSent  = !!sentStatus[sentKey(id)];
-        var sentAt  = sentStatus[sentKey(id)];
-        var tr = (trades || []).find(function(t) { return t.id === co.tradeId; });
-        var c  = tr ? getTC(tr.color) : { b: '#3B82F6', bg: '#EFF6FF', t: '#1E3A8A' };
-        var blockedN = ivs.filter(function(iv) { return iv.status === 'bloque'; }).length;
-        var enCoursN = ivs.filter(function(iv) { return iv.status === 'en_cours'; }).length;
-        var hasContact = co.phone || co.email;
+      {/* ── Cartes entreprises/contacts ── */}
+      {companyCards.map(function(item){
+        var co=item.co, ct=item.contact, ivs=item.ivs, cardId=item.cardId;
+        var isOpen=expanded===cardId;
+        var msg=generateMessage(ct,co,ivs);
+        var wLink=waUrl(ct.phone,msg);
+        var smsLink=ct.phone?'sms:'+ct.phone.replace(/\s/g,'')+'?body='+encodeURIComponent(msg):null;
+        var mLink=ct.email?'mailto:'+ct.email+'?subject='+encodeURIComponent('Planning HSF \u2014 '+weekLabel)+'&body='+encodeURIComponent(msg):null;
+        var isSent=!!sentStatus[sentKey(cardId)], sentAt=sentStatus[sentKey(cardId)];
+        var tr=(trades||[]).find(function(t){return t.id===co.tradeId;});
+        var c=tr?getTC(tr.color):{b:'#3B82F6',bg:'#EFF6FF',t:'#1E3A8A'};
+        var blockedN=ivs.filter(function(iv){return iv.status==='bloque';}).length;
+        var enCoursN=ivs.filter(function(iv){return iv.status==='en_cours';}).length;
 
         return (
-          <div key={id} style={{ background: 'var(--surface)', border: '1px solid var(--border)',
-            borderRadius: 'var(--r)', marginBottom: 10, overflow: 'hidden', boxShadow: 'var(--shadow)' }}>
-
-            {/* Card header — clickable */}
-            <div style={{ padding: '12px 14px', cursor: 'pointer', userSelect: 'none' }}
-              onClick={function() { setExpanded(isOpen ? null : id); }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                <div style={{ width: 10, height: 10, borderRadius: '50%', background: c.b, flexShrink: 0 }} />
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 7, flexWrap: 'wrap' }}>
-                    <span style={{ fontSize: 14, fontWeight: 700, color: 'var(--text)' }}>{co.name}</span>
-                    {tr && <span style={{ fontFamily: "'DM Mono',monospace", fontSize: 10, fontWeight: 700,
-                      color: c.t, background: c.bg, border: '1px solid ' + c.b + '40',
-                      borderRadius: 4, padding: '1px 5px' }}>{tr.short}</span>}
-                    {isSent && <span style={{ fontSize: 10, color: 'var(--success)', fontWeight: 700 }}>✓ {sentAt}</span>}
+          <div key={cardId} style={{background:'var(--surface)',border:'1px solid var(--border)',borderRadius:'var(--r)',marginBottom:10,overflow:'hidden',boxShadow:'var(--shadow)'}}>
+            <div style={{padding:'12px 14px',cursor:'pointer',userSelect:'none'}} onClick={function(){setExpanded(isOpen?null:cardId);}}>
+              <div style={{display:'flex',alignItems:'center',gap:10}}>
+                <div style={{width:10,height:10,borderRadius:'50%',background:c.b,flexShrink:0}}/>
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{display:'flex',alignItems:'center',gap:7,flexWrap:'wrap'}}>
+                    <span style={{fontSize:14,fontWeight:700,color:'var(--text)'}}>{co.name}</span>
+                    {tr&&<span style={{fontFamily:"'DM Mono',monospace",fontSize:10,fontWeight:700,color:c.t,background:c.bg,border:'1px solid '+c.b+'40',borderRadius:4,padding:'1px 5px'}}>{tr.short}</span>}
+                    {!ct.primary&&<span style={{fontSize:10,color:'var(--muted)',fontStyle:'italic'}}>contact 2\u00e8</span>}
+                    {isSent&&<span style={{fontSize:10,color:'var(--success)',fontWeight:700}}>\u2713 {sentAt}</span>}
                   </div>
-                  <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 2 }}>
-                    {co.contact && <span>{co.contact}</span>}
-                    {co.phone   && <span style={{ marginLeft: co.contact ? 8 : 0 }}>· {co.phone}</span>}
-                    {!co.contact && !co.phone && <span style={{ color: 'var(--danger)', fontStyle: 'italic' }}>Contact à renseigner</span>}
+                  <div style={{fontSize:12,color:'var(--muted)',marginTop:2}}>
+                    {ct.name&&<span style={{fontWeight:500,color:'var(--text)'}}>{ct.name}</span>}
+                    {ct.phone&&<span style={{marginLeft:ct.name?8:0}}>\u00b7 {ct.phone}</span>}
+                    {!ct.name&&!ct.phone&&<span style={{color:'var(--danger)',fontStyle:'italic'}}>Contact \u00e0 renseigner dans Config</span>}
                   </div>
-                  <div style={{ display: 'flex', gap: 5, marginTop: 6, flexWrap: 'wrap' }}>
-                    <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--primary)', background: 'var(--primary-l)', borderRadius: 4, padding: '1px 6px' }}>
-                      {ivs.length} tâche{ivs.length !== 1 ? 's' : ''}
-                    </span>
-                    {blockedN > 0 && <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--danger)', background: 'var(--danger-l)', borderRadius: 4, padding: '1px 6px' }}>⚠ {blockedN} bloquée{blockedN > 1 ? 's' : ''}</span>}
-                    {enCoursN > 0 && <span style={{ fontSize: 11, fontWeight: 700, color: '#D97706', background: '#FFFBEB', borderRadius: 4, padding: '1px 6px' }}>● En cours</span>}
-                    {!hasContact && <span style={{ fontSize: 11, color: 'var(--danger)', background: 'var(--danger-l)', borderRadius: 4, padding: '1px 6px', fontWeight: 700 }}>Pas de contact</span>}
+                  <div style={{display:'flex',gap:5,marginTop:6,flexWrap:'wrap'}}>
+                    <span style={{fontSize:11,fontWeight:700,color:'var(--primary)',background:'var(--primary-l)',borderRadius:4,padding:'1px 6px'}}>{ivs.length} t\u00e2che{ivs.length!==1?'s':''}</span>
+                    {blockedN>0&&<span style={{fontSize:11,fontWeight:700,color:'var(--danger)',background:'var(--danger-l)',borderRadius:4,padding:'1px 6px'}}>\u26a0 {blockedN} bloqu\u00e9e{blockedN>1?'s':''}</span>}
+                    {enCoursN>0&&<span style={{fontSize:11,fontWeight:700,color:'#D97706',background:'#FFFBEB',borderRadius:4,padding:'1px 6px'}}>\u25cf En cours</span>}
                   </div>
                 </div>
-                <span style={{ color: 'var(--muted)', fontSize: 14, flexShrink: 0,
-                  transform: isOpen ? 'rotate(180deg)' : 'none', transition: 'transform .2s' }}>▾</span>
+                <span style={{color:'var(--muted)',fontSize:14,flexShrink:0,transform:isOpen?'rotate(180deg)':'none',transition:'transform .2s'}}>\u25be</span>
               </div>
             </div>
 
-            {/* Expanded content */}
-            {isOpen && (
-              <div style={{ borderTop: '1px solid var(--border)' }}>
-
-                {/* Message preview */}
-                <div style={{ padding: '12px 14px', background: 'var(--surface-2)' }}>
-                  <div style={{ fontSize: 10, fontWeight: 800, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '.06em', marginBottom: 8 }}>
-                    Aperçu du message
-                  </div>
-                  <pre style={{
-                    fontFamily: "'DM Sans',sans-serif", fontSize: 13, color: 'var(--text)',
-                    lineHeight: 1.7, whiteSpace: 'pre-wrap', wordBreak: 'break-word', margin: 0,
-                    background: 'var(--surface)', border: '1px solid var(--border)',
-                    borderRadius: 'var(--r-xs)', padding: '14px 16px',
-                    maxHeight: 320, overflowY: 'auto'
-                  }}>{msg}</pre>
+            {isOpen&&(
+              <div style={{borderTop:'1px solid var(--border)'}}>
+                <div style={{padding:'12px 14px',background:'var(--surface-2)'}}>
+                  <div style={{fontSize:10,fontWeight:800,color:'var(--muted)',textTransform:'uppercase',letterSpacing:'.06em',marginBottom:8}}>Aper\u00e7u du message</div>
+                  <pre style={{...preSt,maxHeight:320}}>{msg}</pre>
                 </div>
-
-                {/* No contact warning */}
-                {!hasContact && (
-                  <div style={{ margin: '0 14px 6px', padding: '8px 10px', fontSize: 11, lineHeight: 1.45,
-                    background: '#FFFBEB', border: '1px solid rgba(217,119,6,.3)', borderRadius: 'var(--r-xs)', color: '#92400E' }}>
-                    Ajoutez un téléphone dans <strong>Config → Entreprises</strong> pour activer l'envoi WhatsApp/SMS.
-                  </div>
-                )}
-
-                {/* Action buttons */}
-                <div style={{ padding: '10px 14px 14px', display: 'flex', gap: 7, flexWrap: 'wrap', alignItems: 'center' }}>
-                  <button onClick={function() { doCopy(msg, id); }}
-                    style={{ ...btnSt,
-                      background: copied === id ? 'var(--success)' : 'var(--primary)',
-                      color: '#fff', border: 'none', fontWeight: 800 }}>
-                    {copied === id ? '✓ Copié !' : '⎘ Copier'}
-                  </button>
-
-                  {waLink ? (
-                    <a href={waLink} target="_blank" rel="noopener noreferrer"
-                      onClick={function() { markSent(id); }}
-                      style={{ ...btnSt, background: '#25D366', color: '#fff', border: 'none', fontWeight: 800 }}>
-                      WhatsApp ↗
-                    </a>
-                  ) : (
-                    <span style={{ ...btnSt, color: 'var(--muted)', cursor: 'default', opacity: .5 }}>WhatsApp</span>
-                  )}
-
-                  {smsLink && (
-                    <a href={smsLink} onClick={function() { markSent(id); }}
-                      style={{ ...btnSt, fontWeight: 700 }}>
-                      SMS
-                    </a>
-                  )}
-
-                  {mailLink && (
-                    <a href={mailLink} onClick={function() { markSent(id); }}
-                      style={{ ...btnSt, fontWeight: 700 }}>
-                      ✉ Email
-                    </a>
-                  )}
-
-                  {isSent && (
-                    <button onClick={function() {
-                      var next = Object.assign({}, sentStatus);
-                      delete next[sentKey(id)];
-                      setSentStatus(next);
-                      try { localStorage.setItem('planify_briefings_sent', JSON.stringify(next)); } catch(e) {}
-                    }} style={{ ...btnSt, fontSize: 11, color: 'var(--muted)', marginLeft: 'auto' }}>
-                      Effacer statut
-                    </button>
-                  )}
+                {!ct.phone&&!ct.email&&<div style={{margin:'0 14px 6px',padding:'8px 10px',fontSize:11,lineHeight:1.45,background:'#FFFBEB',border:'1px solid rgba(217,119,6,.3)',borderRadius:'var(--r-xs)',color:'#92400E'}}>Ajoutez un t\u00e9l\u00e9phone dans <strong>Config \u2192 Entreprises</strong> pour activer l\u2019envoi WhatsApp.</div>}
+                <div style={{padding:'10px 14px 14px',display:'flex',gap:7,flexWrap:'wrap',alignItems:'center'}}>
+                  <button onClick={function(){doCopy(msg,cardId);}} style={{...btnSt,background:copied===cardId?'var(--success)':'var(--primary)',color:'#fff',border:'none',fontWeight:800}}>{copied===cardId?'\u2713 Copi\u00e9 !':'\u2398 Copier'}</button>
+                  {wLink?<a href={wLink} target="_blank" rel="noopener noreferrer" onClick={function(){markSent(cardId);}} style={{...btnSt,background:'#25D366',color:'#fff',border:'none',fontWeight:800}}>WhatsApp \u2197</a>:<span style={{...btnSt,color:'var(--muted)',cursor:'default',opacity:.5}}>WhatsApp</span>}
+                  {smsLink&&<a href={smsLink} onClick={function(){markSent(cardId);}} style={{...btnSt,fontWeight:700}}>SMS</a>}
+                  {mLink&&<a href={mLink} onClick={function(){markSent(cardId);}} style={{...btnSt,fontWeight:700}}>\u2709 Email</a>}
+                  {isSent&&<button onClick={function(){var next=Object.assign({},sentStatus);delete next[sentKey(cardId)];setSentStatus(next);try{localStorage.setItem('planify_briefings_sent',JSON.stringify(next));}catch(e){};}} style={{...btnSt,fontSize:11,color:'var(--muted)',marginLeft:'auto'}}>Effacer statut</button>}
                 </div>
               </div>
             )}
@@ -8115,18 +8108,64 @@ function BriefingsScreen({ data, zones, trades, companies, session }) {
         );
       })}
 
-      {/* Footer note */}
-      {companyCards.length > 0 && (
-        <div style={{ fontSize: 11, color: 'var(--muted)', textAlign: 'center', padding: '8px 0 4px' }}>
-          {(companies || []).length - companyCards.length} entreprise{(companies || []).length - companyCards.length !== 1 ? 's' : ''} sans intervention cette semaine
+      {/* ── Récap Projet ── */}
+      <div style={{marginTop:20}}>
+        <div style={{height:1,background:'var(--border)',marginBottom:14}}/>
+        <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:12,cursor:'pointer',userSelect:'none'}} onClick={function(){setRecapOpen(function(o){return !o;});}}>
+          <div style={{flex:1}}>
+            <div style={{fontSize:14,fontWeight:700,color:'var(--text)'}}>R\u00e9cap projet</div>
+            <div style={{fontSize:12,color:'var(--muted)'}}>Vue jour / zone / entreprise / t\u00e2che \u2014 envoi aux parties prenantes</div>
+          </div>
+          <span style={{color:'var(--muted)',fontSize:14,transform:recapOpen?'rotate(180deg)':'none',transition:'transform .2s'}}>\u25be</span>
         </div>
-      )}
+
+        {recapOpen&&(function(){
+          var rm=generateRecap();
+          return (
+            <div>
+              <pre style={{...preSt,maxHeight:400,marginBottom:12}}>{rm}</pre>
+              <div style={{display:'flex',gap:7,flexWrap:'wrap',marginBottom:20}}>
+                <button onClick={function(){doRecapCopy(rm);}} style={{...btnSt,background:recapCopied?'var(--success)':'var(--primary)',color:'#fff',border:'none'}}>{recapCopied?'\u2713 Copi\u00e9 !':'\u2398 Copier le r\u00e9cap'}</button>
+              </div>
+
+              <div style={{fontSize:10,fontWeight:800,color:'var(--muted)',textTransform:'uppercase',letterSpacing:'.06em',marginBottom:10}}>Parties prenantes</div>
+
+              {stakeholders.length===0&&!addingSH&&<div style={{fontSize:13,color:'var(--muted)',marginBottom:10}}>Aucun destinataire. Ajoutez un architecte, BET, MOA\u2026</div>}
+
+              {stakeholders.map(function(sh,i){
+                var shLink=waUrl(sh.phone,rm);
+                return (
+                  <div key={i} style={{display:'flex',alignItems:'center',gap:8,padding:'8px 12px',background:'var(--surface-2)',border:'1px solid var(--border)',borderRadius:'var(--r-xs)',marginBottom:6}}>
+                    <div style={{flex:1}}>
+                      <span style={{fontSize:13,fontWeight:600,color:'var(--text)'}}>{sh.name}</span>
+                      {sh.phone&&<span style={{fontSize:12,color:'var(--muted)',marginLeft:8}}>{sh.phone}</span>}
+                    </div>
+                    {shLink&&<a href={shLink} target="_blank" rel="noopener noreferrer" style={{...btnSt,background:'#25D366',color:'#fff',border:'none',fontSize:11,padding:'4px 10px'}}>WA \u2197</a>}
+                    <button onClick={function(){removeSH(i);}} style={{...btnSt,color:'var(--danger)',border:'none',padding:'4px 8px',fontSize:14,background:'transparent'}}>\u00d7</button>
+                  </div>
+                );
+              })}
+
+              {addingSH?(
+                <div style={{display:'flex',gap:6,marginTop:8,flexWrap:'wrap'}}>
+                  <input value={newSH.name} onChange={function(e){setNewSH(function(p){return Object.assign({},p,{name:e.target.value});});}} style={{...inpSt,flex:'1 1 130px'}} placeholder="Nom (ex. Architecte)" autoFocus/>
+                  <input value={newSH.phone} onChange={function(e){setNewSH(function(p){return Object.assign({},p,{phone:e.target.value});});}} style={{...inpSt,flex:'1 1 130px'}} placeholder="T\u00e9l\u00e9phone" type="tel"/>
+                  <button onClick={addSH} style={{...btnSt,background:'var(--primary)',color:'#fff',border:'none'}}>\u2713 Ajouter</button>
+                  <button onClick={function(){setAddingSH(false);setNewSH({name:'',phone:''}); }} style={btnSt}>Annuler</button>
+                </div>
+              ):(
+                <button onClick={function(){setAddingSH(true);}} style={{...btnSt,marginTop:4}}>+ Ajouter une partie prenante</button>
+              )}
+            </div>
+          );
+        })()}
+      </div>
+
     </div>
   );
 }
 
 
-/* ════════════════════════════════════════════════════════════
    ROOT APP
 ═══════════════════════════════════════════════════════════ */
 function PlanifyApp() {
@@ -8551,7 +8590,7 @@ function PlanifyApp() {
       if(cData&&cData.length) setCompanies(cData.map(function(c){
         var tradeId = c.trade_id || c.tradeId || '';
         var loc = COMPANIES.find(function(lc){ return lc.id === c.id || (lc.name === c.name && (!tradeId || lc.tradeId === tradeId)); }) || {};
-        return {id:c.id,name:c.name,contact:c.contact||loc.contact||'',phone:c.phone||loc.phone||'',email:c.email||loc.email||'',code:c.code||loc.code||'',tradeId:tradeId||loc.tradeId||'',updated_at:c.updated_at||''};
+        return {id:c.id,name:c.name,contact:c.contact||loc.contact||'',phone:c.phone||loc.phone||'',email:c.email||loc.email||'',code:c.code||loc.code||'',tradeId:tradeId||loc.tradeId||'',contacts:Array.isArray(c.contacts)?c.contacts:(loc.contacts||[]),updated_at:c.updated_at||''};
       }));
       if(iData&&iData.length) setData(iData.map(normalizeInterventionRow));
       setCalendarOverrides((calData||[]).map(function(r){
