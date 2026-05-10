@@ -8019,7 +8019,7 @@ function BriefingsScreen({ data, zones, trades, companies, session }) {
       {/* ── Header ── */}
       <div style={{marginBottom:14}}>
         <div style={{fontSize:18,fontWeight:700,color:'var(--text)',marginBottom:3}}>Fiches de mission</div>
-        <div style={{fontSize:13,color:'var(--muted)',lineHeight:1.45}}>Briefings hebdomadaires + r\u00e9cap projet pour vos parties prenantes.</div>
+        <div style={{fontSize:13,color:'var(--muted)',lineHeight:1.45}}>Briefings hebdomadaires + récap projet pour vos parties prenantes.</div>
       </div>
 
       {/* ── Semaine ── */}
@@ -8034,7 +8034,7 @@ function BriefingsScreen({ data, zones, trades, companies, session }) {
 
       {/* ── Stats ── */}
       <div style={{display:'flex',gap:8,marginBottom:18}}>
-        {[{v:companyCards.length,l:'contacts',c:'var(--text)'},{v:totalTasks,l:'t\u00e2ches',c:'var(--primary)'},{v:totalBlocked,l:'bloqu\u00e9es',c:totalBlocked>0?'var(--danger)':'var(--muted)'},{v:totalSent,l:'envoy\u00e9es',c:'var(--success)'}].map(function(s){
+        {[{v:companyCards.length,l:'contacts',c:'var(--text)'},{v:totalTasks,l:'tâches',c:'var(--primary)'},{v:totalBlocked,l:'bloquées',c:totalBlocked>0?'var(--danger)':'var(--muted)'},{v:totalSent,l:'envoyées',c:'var(--success)'}].map(function(s){
           return <div key={s.l} style={{flex:1,background:'var(--surface-2)',border:'1px solid var(--border)',borderRadius:'var(--r-sm)',padding:'8px 10px',textAlign:'center'}}>
             <div style={{fontSize:18,fontWeight:800,color:s.c}}>{s.v}</div>
             <div style={{fontSize:10,color:'var(--muted)',marginTop:1}}>{s.l}</div>
@@ -8046,7 +8046,7 @@ function BriefingsScreen({ data, zones, trades, companies, session }) {
         {weekLabel} \u00b7 {fmtShort(week.start)} \u2192 {fmtShort(week.end)}
       </div>
 
-      {companyCards.length===0&&<div style={{textAlign:'center',padding:'44px 20px',color:'var(--muted)',fontSize:14}}>Aucune intervention planifi\u00e9e pour cette p\u00e9riode.</div>}
+      {companyCards.length===0&&<div style={{textAlign:'center',padding:'44px 20px',color:'var(--muted)',fontSize:14}}>Aucune intervention planifiée pour cette période.</div>}
 
       {/* ── Cartes entreprises/contacts ── */}
       {companyCards.map(function(item){
@@ -8071,7 +8071,7 @@ function BriefingsScreen({ data, zones, trades, companies, session }) {
                   <div style={{display:'flex',alignItems:'center',gap:7,flexWrap:'wrap'}}>
                     <span style={{fontSize:14,fontWeight:700,color:'var(--text)'}}>{co.name}</span>
                     {tr&&<span style={{fontFamily:"'DM Mono',monospace",fontSize:10,fontWeight:700,color:c.t,background:c.bg,border:'1px solid '+c.b+'40',borderRadius:4,padding:'1px 5px'}}>{tr.short}</span>}
-                    {!ct.primary&&<span style={{fontSize:10,color:'var(--muted)',fontStyle:'italic'}}>contact 2\u00e8</span>}
+                    {!ct.primary&&<span style={{fontSize:10,color:'var(--muted)',fontStyle:'italic'}}>contact 2è</span>}
                     {isSent&&<span style={{fontSize:10,color:'var(--success)',fontWeight:700}}>\u2713 {sentAt}</span>}
                   </div>
                   <div style={{fontSize:12,color:'var(--muted)',marginTop:2}}>
@@ -8080,12 +8080,12 @@ function BriefingsScreen({ data, zones, trades, companies, session }) {
                     {!ct.name&&!ct.phone&&<span style={{color:'var(--danger)',fontStyle:'italic'}}>Contact \u00e0 renseigner dans Config</span>}
                   </div>
                   <div style={{display:'flex',gap:5,marginTop:6,flexWrap:'wrap'}}>
-                    <span style={{fontSize:11,fontWeight:700,color:'var(--primary)',background:'var(--primary-l)',borderRadius:4,padding:'1px 6px'}}>{ivs.length} t\u00e2che{ivs.length!==1?'s':''}</span>
-                    {blockedN>0&&<span style={{fontSize:11,fontWeight:700,color:'var(--danger)',background:'var(--danger-l)',borderRadius:4,padding:'1px 6px'}}>\u26a0 {blockedN} bloqu\u00e9e{blockedN>1?'s':''}</span>}
+                    <span style={{fontSize:11,fontWeight:700,color:'var(--primary)',background:'var(--primary-l)',borderRadius:4,padding:'1px 6px'}}>{ivs.length} tâche{ivs.length!==1?'s':''}</span>
+                    {blockedN>0&&<span style={{fontSize:11,fontWeight:700,color:'var(--danger)',background:'var(--danger-l)',borderRadius:4,padding:'1px 6px'}}>⚠ {blockedN} bloquée{blockedN>1?'s':''}</span>}
                     {enCoursN>0&&<span style={{fontSize:11,fontWeight:700,color:'#D97706',background:'#FFFBEB',borderRadius:4,padding:'1px 6px'}}>\u25cf En cours</span>}
                   </div>
                 </div>
-                <span style={{color:'var(--muted)',fontSize:14,flexShrink:0,transform:isOpen?'rotate(180deg)':'none',transition:'transform .2s'}}>\u25be</span>
+                <span style={{color:'var(--muted)',fontSize:14,flexShrink:0,transform:isOpen?'rotate(180deg)':'none',transition:'transform .2s'}}>▾</span>
               </div>
             </div>
 
@@ -8095,7 +8095,7 @@ function BriefingsScreen({ data, zones, trades, companies, session }) {
                   <div style={{fontSize:10,fontWeight:800,color:'var(--muted)',textTransform:'uppercase',letterSpacing:'.06em',marginBottom:8}}>Aper\u00e7u du message</div>
                   <pre style={{...preSt,maxHeight:320}}>{msg}</pre>
                 </div>
-                {!ct.phone&&!ct.email&&<div style={{margin:'0 14px 6px',padding:'8px 10px',fontSize:11,lineHeight:1.45,background:'#FFFBEB',border:'1px solid rgba(217,119,6,.3)',borderRadius:'var(--r-xs)',color:'#92400E'}}>Ajoutez un t\u00e9l\u00e9phone dans <strong>Config \u2192 Entreprises</strong> pour activer l\u2019envoi WhatsApp.</div>}
+                {!ct.phone&&!ct.email&&<div style={{margin:'0 14px 6px',padding:'8px 10px',fontSize:11,lineHeight:1.45,background:'#FFFBEB',border:'1px solid rgba(217,119,6,.3)',borderRadius:'var(--r-xs)',color:'#92400E'}}>Ajoutez un téléphone dans <strong>Config → Entreprises</strong> pour activer l’envoi WhatsApp.</div>}
                 <div style={{padding:'10px 14px 14px',display:'flex',gap:7,flexWrap:'wrap',alignItems:'center'}}>
                   <button onClick={function(){doCopy(msg,cardId);}} style={{...btnSt,background:copied===cardId?'var(--success)':'var(--primary)',color:'#fff',border:'none',fontWeight:800}}>{copied===cardId?'\u2713 Copi\u00e9 !':'\u2398 Copier'}</button>
                   {wLink?<a href={wLink} target="_blank" rel="noopener noreferrer" onClick={function(){markSent(cardId);}} style={{...btnSt,background:'#25D366',color:'#fff',border:'none',fontWeight:800}}>WhatsApp \u2197</a>:<span style={{...btnSt,color:'var(--muted)',cursor:'default',opacity:.5}}>WhatsApp</span>}
@@ -8114,10 +8114,10 @@ function BriefingsScreen({ data, zones, trades, companies, session }) {
         <div style={{height:1,background:'var(--border)',marginBottom:14}}/>
         <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:12,cursor:'pointer',userSelect:'none'}} onClick={function(){setRecapOpen(function(o){return !o;});}}>
           <div style={{flex:1}}>
-            <div style={{fontSize:14,fontWeight:700,color:'var(--text)'}}>R\u00e9cap projet</div>
-            <div style={{fontSize:12,color:'var(--muted)'}}>Vue jour / zone / entreprise / t\u00e2che \u2014 envoi aux parties prenantes</div>
+            <div style={{fontSize:14,fontWeight:700,color:'var(--text)'}}>Récap projet</div>
+            <div style={{fontSize:12,color:'var(--muted)'}}>Vue jour / zone / entreprise / tâche — envoi aux parties prenantes</div>
           </div>
-          <span style={{color:'var(--muted)',fontSize:14,transform:recapOpen?'rotate(180deg)':'none',transition:'transform .2s'}}>\u25be</span>
+          <span style={{color:'var(--muted)',fontSize:14,transform:recapOpen?'rotate(180deg)':'none',transition:'transform .2s'}}>▾</span>
         </div>
 
         {recapOpen && (
@@ -8130,7 +8130,7 @@ function BriefingsScreen({ data, zones, trades, companies, session }) {
             </div>
             <div style={{fontSize:10,fontWeight:800,color:'var(--muted)',textTransform:'uppercase',letterSpacing:'.06em',marginBottom:10}}>Parties prenantes</div>
             {stakeholders.length===0&&!addingSH&&(
-              <div style={{fontSize:13,color:'var(--muted)',marginBottom:10}}>{'Aucun destinataire. Ajoutez un architecte, BET, MOA\u2026'}</div>
+              <div style={{fontSize:13,color:'var(--muted)',marginBottom:10}}>{'Aucun destinataire. Ajoutez un architecte, BET, MOA…'}</div>
             )}
             {stakeholders.map(function(sh,i){
               var shLink=waUrl(sh.phone,recapMsg);
@@ -8148,7 +8148,7 @@ function BriefingsScreen({ data, zones, trades, companies, session }) {
             {addingSH ? (
               <div style={{display:'flex',gap:6,marginTop:8,flexWrap:'wrap'}}>
                 <input value={newSH.name} onChange={function(e){setNewSH(function(p){return Object.assign({},p,{name:e.target.value});});}} style={{...inpSt,flex:'1 1 130px'}} placeholder='Nom (ex. Architecte)' autoFocus/>
-                <input value={newSH.phone} onChange={function(e){setNewSH(function(p){return Object.assign({},p,{phone:e.target.value});});}} style={{...inpSt,flex:'1 1 130px'}} placeholder='{'+'T\u00e9l\u00e9phone'+'}' type='tel'/>
+                <input value={newSH.phone} onChange={function(e){setNewSH(function(p){return Object.assign({},p,{phone:e.target.value});});}} style={{...inpSt,flex:'1 1 130px'}} placeholder="Téléphone" type='tel'/>
                 <button onClick={addSH} style={{...btnSt,background:'var(--primary)',color:'#fff',border:'none'}}>{'\u2713 Ajouter'}</button>
                 <button onClick={function(){setAddingSH(false);setNewSH({name:'',phone:''});}} style={btnSt}>Annuler</button>
               </div>
