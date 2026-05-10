@@ -7933,23 +7933,21 @@ function BriefingsScreen({ data, zones, trades, companies, session }) {
   // ── Récap projet ─────────────────────────────────────────
   function generateRecap() {
     var E2 = {
-      cal:  String.fromCodePoint(0x1F4C5),
-      pin:  String.fromCodePoint(0x1F4CD),
+      cal: String.fromCodePoint(0x1F4C5),
+      pin: String.fromCodePoint(0x1F4CD),
     };
-    var L=[];
-    L.push('*R\u00e9cap chantier HSF*');
-    L.push('Semaine du '+fmtShort(week.start)+' au '+fmtShort(week.end));
-    L.push('');
-    var ivIds={}, coSet={};
-    for(var di=0;di<5;di++){
-      var d=new Date(week.start+'T00:00:00');
-      d.setDate(d.getDate()+di);
-      var dayStr=d.toISOString().slice(0,10);
+    var twoWk = (weekOff === -1);
+    function localDs(d) {
+      return d.getFullYear()+'-'
+        +String(d.getMonth()+1).padStart(2,'0')+'-'
+        +String(d.getDate()).padStart(2,'0');
+    }
+    function pushDay(dayStr, ivIds, coSet) {
       var dayIvs=(data||[]).filter(function(iv){
         return iv.status!=='termine' && overlapsDay(iv,dayStr)
           && !((iv.off_days||[]).includes(dayStr));
       });
-      if(!dayIvs.length) continue;
+      if(!dayIvs.length) return;
       dayIvs.forEach(function(iv){ivIds[iv.id]=true; coSet[iv.company]=true;});
       L.push(E2.cal+' *'+fmtFull(dayStr)+'*');
       var byZone={};
@@ -7969,9 +7967,42 @@ function BriefingsScreen({ data, zones, trades, companies, session }) {
       });
       L.push('');
     }
+    var L=[], ivIds={}, coSet={};
+    if(twoWk){
+      L.push('*R\u00e9cap chantier HSF \u2014 2 semaines \u00e0 venir*');
+      L.push('Du lundi '+fmtShort(week1base.start)+' au vendredi '+fmtShort(week2base.end));
+    } else {
+      L.push('*R\u00e9cap chantier HSF*');
+      L.push('Semaine du '+fmtShort(week.start)+' au '+fmtShort(week.end));
+    }
+    L.push('');
+    if(twoWk){
+      L.push('*Semaine 1 \u2014 lundi '+fmtShort(week1base.start)+' au vendredi '+fmtShort(week1base.end)+'*');
+      L.push('');
+    }
+    var days1 = twoWk ? 5 : 5;
+    var base1 = twoWk ? week1base.start : week.start;
+    for(var di=0;di<days1;di++){
+      var d=new Date(base1+'T00:00:00');
+      d.setDate(d.getDate()+di);
+      pushDay(localDs(d), ivIds, coSet);
+    }
+    if(twoWk){
+      L.push('*Semaine 2 \u2014 lundi '+fmtShort(week2base.start)+' au vendredi '+fmtShort(week2base.end)+'*');
+      L.push('');
+      for(var di2=0;di2<5;di2++){
+        var d2=new Date(week2base.start+'T00:00:00');
+        d2.setDate(d2.getDate()+di2);
+        pushDay(localDs(d2), ivIds, coSet);
+      }
+    }
     var nbCo=Object.keys(coSet).length, nbIv=Object.keys(ivIds).length;
-    if(nbIv===0) L.push('Aucune intervention planifi\u00e9e cette semaine.');
-    else L.push(nbCo+' entreprise'+(nbCo>1?'s':'')+' \u00b7 '+nbIv+' intervention'+(nbIv>1?'s':''));
+    if(nbIv===0){
+      L.push(twoWk?'Aucune intervention planifi\u00e9e sur ces 2 semaines.':'Aucune intervention planifi\u00e9e cette semaine.');
+    } else {
+      L.push(nbCo+' entreprise'+(nbCo>1?'s':'')+' \u00b7 '+nbIv+' intervention'+(nbIv>1?'s':'')
+        +(twoWk?' sur 2 semaines':''));
+    }
     return L.join('\n');
   }
 
