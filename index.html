@@ -8012,6 +8012,7 @@ function BriefingsScreen({ data, zones, trades, companies, session }) {
   var inpSt={padding:'6px 8px',borderRadius:'var(--r-xs)',border:'1px solid var(--border)',background:'var(--surface)',color:'var(--text)',fontSize:12,fontFamily:"'DM Sans',sans-serif",outline:'none'};
   var preSt={fontFamily:"'DM Sans',sans-serif",fontSize:12.5,color:'var(--text)',lineHeight:1.7,whiteSpace:'pre-wrap',wordBreak:'break-word',margin:0,background:'var(--surface)',border:'1px solid var(--border)',borderRadius:'var(--r-xs)',padding:'14px 16px',overflowY:'auto'};
 
+  var recapMsg = recapOpen ? generateRecap() : '';
   return (
     <div style={{height:'100%',overflowY:'auto',padding:'16px 14px 100px'}}>
 
@@ -8119,46 +8120,43 @@ function BriefingsScreen({ data, zones, trades, companies, session }) {
           <span style={{color:'var(--muted)',fontSize:14,transform:recapOpen?'rotate(180deg)':'none',transition:'transform .2s'}}>\u25be</span>
         </div>
 
-        {recapOpen&&(function(){
-          var rm=generateRecap();
-          return (
-            <div>
-              <pre style={{...preSt,maxHeight:400,marginBottom:12}}>{rm}</pre>
-              <div style={{display:'flex',gap:7,flexWrap:'wrap',marginBottom:20}}>
-                <button onClick={function(){doRecapCopy(rm);}} style={{...btnSt,background:recapCopied?'var(--success)':'var(--primary)',color:'#fff',border:'none'}}>{recapCopied?'\u2713 Copi\u00e9 !':'\u2398 Copier le r\u00e9cap'}</button>
-              </div>
-
-              <div style={{fontSize:10,fontWeight:800,color:'var(--muted)',textTransform:'uppercase',letterSpacing:'.06em',marginBottom:10}}>Parties prenantes</div>
-
-              {stakeholders.length===0&&!addingSH&&<div style={{fontSize:13,color:'var(--muted)',marginBottom:10}}>Aucun destinataire. Ajoutez un architecte, BET, MOA\u2026</div>}
-
-              {stakeholders.map(function(sh,i){
-                var shLink=waUrl(sh.phone,rm);
-                return (
-                  <div key={i} style={{display:'flex',alignItems:'center',gap:8,padding:'8px 12px',background:'var(--surface-2)',border:'1px solid var(--border)',borderRadius:'var(--r-xs)',marginBottom:6}}>
-                    <div style={{flex:1}}>
-                      <span style={{fontSize:13,fontWeight:600,color:'var(--text)'}}>{sh.name}</span>
-                      {sh.phone&&<span style={{fontSize:12,color:'var(--muted)',marginLeft:8}}>{sh.phone}</span>}
-                    </div>
-                    {shLink&&<a href={shLink} target="_blank" rel="noopener noreferrer" style={{...btnSt,background:'#25D366',color:'#fff',border:'none',fontSize:11,padding:'4px 10px'}}>WA \u2197</a>}
-                    <button onClick={function(){removeSH(i);}} style={{...btnSt,color:'var(--danger)',border:'none',padding:'4px 8px',fontSize:14,background:'transparent'}}>\u00d7</button>
-                  </div>
-                );
-              })}
-
-              {addingSH?(
-                <div style={{display:'flex',gap:6,marginTop:8,flexWrap:'wrap'}}>
-                  <input value={newSH.name} onChange={function(e){setNewSH(function(p){return Object.assign({},p,{name:e.target.value});});}} style={{...inpSt,flex:'1 1 130px'}} placeholder="Nom (ex. Architecte)" autoFocus/>
-                  <input value={newSH.phone} onChange={function(e){setNewSH(function(p){return Object.assign({},p,{phone:e.target.value});});}} style={{...inpSt,flex:'1 1 130px'}} placeholder="T\u00e9l\u00e9phone" type="tel"/>
-                  <button onClick={addSH} style={{...btnSt,background:'var(--primary)',color:'#fff',border:'none'}}>\u2713 Ajouter</button>
-                  <button onClick={function(){setAddingSH(false);setNewSH({name:'',phone:''}); }} style={btnSt}>Annuler</button>
-                </div>
-              ):(
-                <button onClick={function(){setAddingSH(true);}} style={{...btnSt,marginTop:4}}>+ Ajouter une partie prenante</button>
-              )}
+        {recapOpen && (
+          <div>
+            <pre style={{...preSt,maxHeight:400,marginBottom:12}}>{recapMsg}</pre>
+            <div style={{display:'flex',gap:7,flexWrap:'wrap',marginBottom:20}}>
+              <button onClick={function(){doRecapCopy(recapMsg);}} style={{...btnSt,background:recapCopied?'var(--success)':'var(--primary)',color:'#fff',border:'none'}}>
+                {recapCopied ? '\u2713 Copi\u00e9 !' : '\u2398 Copier le r\u00e9cap'}
+              </button>
             </div>
-          );
-        })()}
+            <div style={{fontSize:10,fontWeight:800,color:'var(--muted)',textTransform:'uppercase',letterSpacing:'.06em',marginBottom:10}}>Parties prenantes</div>
+            {stakeholders.length===0&&!addingSH&&(
+              <div style={{fontSize:13,color:'var(--muted)',marginBottom:10}}>{'Aucun destinataire. Ajoutez un architecte, BET, MOA\u2026'}</div>
+            )}
+            {stakeholders.map(function(sh,i){
+              var shLink=waUrl(sh.phone,recapMsg);
+              return (
+                <div key={i} style={{display:'flex',alignItems:'center',gap:8,padding:'8px 12px',background:'var(--surface-2)',border:'1px solid var(--border)',borderRadius:'var(--r-xs)',marginBottom:6}}>
+                  <div style={{flex:1}}>
+                    <span style={{fontSize:13,fontWeight:600,color:'var(--text)'}}>{sh.name}</span>
+                    {sh.phone&&<span style={{fontSize:12,color:'var(--muted)',marginLeft:8}}>{sh.phone}</span>}
+                  </div>
+                  {shLink&&<a href={shLink} target='_blank' rel='noopener noreferrer' style={{...btnSt,background:'#25D366',color:'#fff',border:'none',fontSize:11,padding:'4px 10px'}}>{'WA \u2197'}</a>}
+                  <button onClick={function(){removeSH(i);}} style={{...btnSt,color:'var(--danger)',border:'none',padding:'4px 8px',fontSize:14,background:'transparent'}}>{'\u00d7'}</button>
+                </div>
+              );
+            })}
+            {addingSH ? (
+              <div style={{display:'flex',gap:6,marginTop:8,flexWrap:'wrap'}}>
+                <input value={newSH.name} onChange={function(e){setNewSH(function(p){return Object.assign({},p,{name:e.target.value});});}} style={{...inpSt,flex:'1 1 130px'}} placeholder='Nom (ex. Architecte)' autoFocus/>
+                <input value={newSH.phone} onChange={function(e){setNewSH(function(p){return Object.assign({},p,{phone:e.target.value});});}} style={{...inpSt,flex:'1 1 130px'}} placeholder='{'+'T\u00e9l\u00e9phone'+'}' type='tel'/>
+                <button onClick={addSH} style={{...btnSt,background:'var(--primary)',color:'#fff',border:'none'}}>{'\u2713 Ajouter'}</button>
+                <button onClick={function(){setAddingSH(false);setNewSH({name:'',phone:''});}} style={btnSt}>Annuler</button>
+              </div>
+            ) : (
+              <button onClick={function(){setAddingSH(true);}} style={{...btnSt,marginTop:4}}>{'+ Ajouter une partie prenante'}</button>
+            )}
+          </div>
+        )}
       </div>
 
     </div>
