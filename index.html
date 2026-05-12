@@ -446,6 +446,7 @@ Object.assign(window, {
   HOLIDAYS_2026, isHoliday, workingDaysUntil,
   getTC, getStatusThemeMeta, getMonday, weekDays, multiWeekDays, dateStr, dateFR, fmtDate, isToday, inDay, isTaskFrozenOn, isTaskActiveOn, isTaskFrozenToday, isTaskActiveToday,
   genId, genTaskNum, normalizeTaskNumber, daysUntil, deadlineColor,
+  effectiveStatus,
 });
 </script>
 <script>
@@ -6166,6 +6167,15 @@ function StatusWithNote({ iv, session, onStatusChange }) {
 
   return (
     <div style={{marginBottom:14}}>
+      {isTaskLate(iv) && (
+        <div style={{display:'flex',alignItems:'center',gap:8,padding:'8px 11px',
+          marginBottom:10,borderRadius:'var(--r-sm)',
+          background:'rgba(234,88,12,.12)',border:'1px solid rgba(234,88,12,.35)',
+          color:'#9A3412',fontSize:12,fontWeight:700,lineHeight:1.35}}>
+          <span style={{fontSize:16,flexShrink:0}}>⏰</span>
+          <span>En retard — date de fin dépassée. Sélectionnez le statut réel ci-dessous.</span>
+        </div>
+      )}
       <div style={{fontSize:11,fontWeight:700,color:'var(--muted)',letterSpacing:'.05em',
         textTransform:'uppercase',fontFamily:"'DM Mono',monospace",marginBottom:8}}>
         Mettre à jour le statut
@@ -10332,10 +10342,11 @@ function PlanifyApp() {
     }
 
     function statusShort(status) {
+      if (status === 'en_retard') return 'En retard';
       if (status === 'encours') return 'En cours';
       if (status === 'termine') return 'Terminé';
       if (status === 'bloque') return 'Bloqué';
-      return 'À faire';
+      return 'À réaliser';
     }
 
     function drawWrapped(doc, text, x, y, maxW, maxLines, lineH) {
@@ -10665,7 +10676,7 @@ function PlanifyApp() {
               doc.setFillColor(stRgb[0], stRgb[1], stRgb[2]);
               doc.circle(cardX + cardW - 4.8, cardY + 3.6, 1.1, 'F');
             } else {
-              var statusLabel = statusShort(iv.status);
+              var statusLabel = statusShort(effectiveStatus(iv));
               var statusW = readableMode ? 34 : 24;
               var statusH = readableMode ? 10 : 7;
 
