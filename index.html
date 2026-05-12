@@ -185,16 +185,14 @@ const STATUS_META = {
   en_retard:{label:'En retard',  dot:'#EA580C',text:'#9A3412',bg:'rgba(234,88,12,.13)', pill:'#EA580C'},
 };
 
-// effectiveStatus: computed display status (uses existing isTaskLate)
-// isTaskLate is defined in planify-screens.jsx scope — fallback to string compare here
+function isLate(iv) {
+  if (!iv || iv.status === 'termine') return false;
+  var d = new Date();
+  var today = d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+  return (iv.end || iv.start || '') < today;
+}
 function effectiveStatus(iv) {
-  if (!iv) return 'arealis';
-  if (iv.status === 'termine') return 'termine';
-  var rawDate = iv.end || iv.start;
-  if (!rawDate) return iv.status || 'arealis';
-  var due = new Date(rawDate + 'T00:00:00');
-  var today = new Date(); today.setHours(0,0,0,0);
-  return due < today ? 'en_retard' : (iv.status || 'arealis');
+  return (iv && isLate(iv)) ? 'en_retard' : ((iv && iv.status) || 'arealis');
 }
 
 function getStatusThemeMeta(status) {
@@ -3658,12 +3656,12 @@ function ZoneTaskList({ items, zones, trades, onOpenDetail, isAdmin, title, empt
 
   const counts = ordered.reduce(function(acc, iv) {
     if (!(iv.status === 'encours' && isTaskFrozenToday(iv))) {
-      var es = effectiveStatus(iv);
-      acc[es] = (acc[es] || 0) + 1;
+      acc[iv.status] = (acc[iv.status] || 0) + 1;
     }
+    if (isTaskLate(iv)) acc.retard += 1;
     acc.total += 1;
     return acc;
-  }, { total: 0, termine: 0, encours: 0, bloque: 0, arealis: 0, en_retard: 0 });
+  }, { total: 0, termine: 0, encours: 0, bloque: 0, arealis: 0, retard: 0 });
 
   const stat = function(label, value, color) {
     return (
@@ -3690,7 +3688,7 @@ function ZoneTaskList({ items, zones, trades, onOpenDetail, isAdmin, title, empt
         <div style={{display:'flex',gap:5,flexWrap:'wrap'}}>
           {stat('total', counts.total, 'var(--muted)')}
           {counts.bloque > 0 && stat('bloquée' + (counts.bloque > 1 ? 's' : ''), counts.bloque, '#DC2626')}
-          {counts.en_retard > 0 && stat('en retard', counts.en_retard, '#EA580C')}
+          {counts.retard > 0 && stat('en retard', counts.retard, '#EA580C')}
           {counts.encours > 0 && stat('en cours', counts.encours, '#2563EB')}
           {counts.arealis > 0 && stat('à faire', counts.arealis, '#6B7280')}
           {counts.termine > 0 && stat('terminée' + (counts.termine > 1 ? 's' : ''), counts.termine + '/' + counts.total, '#16A34A')}
@@ -5323,8 +5321,8 @@ function ListScreen({ data, zones, trades, companies, weekOffset, filter, sessio
   const accent = getTC(mainTrade ? mainTrade.color : 'blue');
   const total = baseData.length;
   const done = baseData.filter(function(i){ return i.status === 'termine'; }).length;
-  const enc  = baseData.filter(function(i){ return i.status === 'encours' && !isTaskFrozenToday(i) && !isTaskLate(i); }).length;
-  const bloc = baseData.filter(function(i){ return i.status === 'bloque' && !isTaskLate(i); }).length;
+  const enc = baseData.filter(function(i){ return i.status === 'encours' && !isTaskFrozenToday(i); }).length;
+  const bloc = baseData.filter(function(i){ return i.status === 'bloque'; }).length;
   const late = baseData.filter(function(i){ return isTaskLate(i); }).length;
   const todoTodayCount = baseData.filter(function(i){ return isTaskTodoToday(i); }).length;
   const progress = pctDone(baseData);
@@ -10203,7 +10201,7 @@ function PlanifyApp() {
     }).map(function(iv){
       var z = zones.find(function(x){ return x.id === iv.zone; });
       var tr = trades.find(function(x){ return x.id === iv.trade; });
-      var st = getStatusThemeMeta(effectiveStatus(iv));
+      var st = getStatusThemeMeta(iv.status);
 
       return {
         zone: z ? z.name : iv.zone,
@@ -10627,7 +10625,7 @@ function PlanifyApp() {
             var col = getTC(tr ? tr.color : 'blue');
             var rgb = hexToRgb(col.b);
             var fill = mixWhite(rgb, overviewMode ? 0.90 : 0.88);
-            var st = getStatusThemeMeta(effectiveStatus(iv));
+            var st = getStatusThemeMeta(iv.status);
             var stRgb = hexToRgb(st.dot);
             var stFill = mixWhite(stRgb, 0.86);
 
