@@ -199,6 +199,208 @@ function effectiveStatus(iv) {
   return due < today ? 'en_retard' : (iv.status || 'arealis'); // calcul auto date dépassée
 }
 
+// ══════════════════════════════════════════════════════════════════
+// MOTEUR D'AVANCEMENT PROBABILISTE TEMPOREL — v2 (document terrain)
+// ══════════════════════════════════════════════════════════════════
+
+/**
+ * Calcule l'avancement réel d'une tâche selon le modèle temporel pondéré.
+ * Retourne un objet { pct, theoretical, manual, method, confidence }
+ */
+function computeTaskProgress(iv) {
+  if (!iv) return { pct:0, theoretical:0, manual:0, method:'unknown', confidence:0 };
+
+  // Cas 1 — Terminée : 100%
+  if (iv.status === 'termine') return { pct:100, theoretical:100, manual:iv.progress_manual||100, method:'done', confidence:1 };
+
+  var today = new Date(); today.setHours(0,0,0,0);
+  var startD = iv.start ? new Date(iv.start+'T00:00:00') : null;
+  var endD   = iv.end   ? new Date(iv.end+'T00:00:00')   : null;
+  if (!endD && startD) endD = new Date(startD);
+
+  // Durée totale en jours (min 1)
+  var totalDays = startD && endD ? Math.max(1, Math.round((endD - startD) / 86400000) + 1) : 1;
+  // Temps consommé depuis le début
+  var elapsed   = startD ? Math.max(0, Math.round((today - startD) / 86400000)) : 0;
+
+  // Avancement théorique temporel
+  var theoretical = 0;
+  if (startD && today >= startD) {
+    theoretical = Math.min(100, Math.round(elapsed / totalDays * 100));
+    if (iv.status === 'encours' || effectiveStatus(iv) === 'en_retard') {
+      theoretical = Math.max(10, Math.min(95, theoretical)); // 10%-95% sur tâche en cours
+    }
+  }
+
+  // Avancement manuel optionnel (terrain)
+  var manual = (typeof iv.progress_manual === 'number') ? Math.min(100, Math.max(0, iv.progress_manual)) : null;
+
+  // Cas 2 — Bloquée : gèle la progression (ne revient pas à 0)
+  if (iv.status === 'bloque') {
+    var frozenPct = manual !== null ? manual : Math.max(5, theoretical);
+    return { pct: frozenPct, theoretical, manual: manual||0, method:'blocked_frozen', confidence:0.5 };
+  }
+
+  // Cas 3 — Non démarrée (future ou arealis sans date passée)
+  if (!startD || today < startD) {
+    var manualFuture = (manual !== null && manual > 0) ? manual : 0;
+    return { pct: manualFuture, theoretical:0, manual: manual||0, method:'not_started', confidence:0.9 };
+  }
+
+  // Cas 4 — En cours ou en retard : MAX(theoretical, manual)
+  var finalPct = manual !== null ? Math.max(theoretical, manual) : theoretical;
+  finalPct = Math.min(95, Math.max(0, finalPct)); // jamais 100% sans validation
+
+  // Confiance : diminue si en retard
+  var es = effectiveStatus(iv);
+  var confidence = es === 'en_retard' ? 0.6 : es === 'encours' ? 0.85 : 0.75;
+
+  return { pct: finalPct, theoretical, manual: manual||0, method:'temporal', confidence };
+}
+
+/**
+ * Calcule la santé globale du projet / chantier.
+ * Retourne { avancementReel, cadenceCible, derive, fiabilite, projectionDays, riskyZones, alertes }
+ */
+function computeProjectHealth(data, zones) {
+  var today = new Date(); today.setHours(0,0,0,0);
+  var allTasks = data || [];
+
+  // 1. Avancement réel pondéré (toutes tâches)
+  var totalWeight = 0, weightedProgress = 0;
+  allTasks.forEach(function(iv) {
+    var p = computeTaskProgress(iv);
+    var weight = 1; // on peut pondérer par durée plus tard
+    weightedProgress += p.pct * weight;
+    totalWeight += weight;
+  });
+  var avancementReel = totalWeight > 0 ? Math.round(weightedProgress / totalWeight) : 0;
+
+  // 2. Cadence cible théorique : avancement si tout était au rythme prévu
+  var totalTheo = 0, theoWeight = 0;
+  allTasks.forEach(function(iv) {
+    var p = computeTaskProgress(iv);
+    var weight = 1;
+    totalTheo += p.theoretical * weight;
+    theoWeight += weight;
+  });
+  var cadenceCible = theoWeight > 0 ? Math.round(totalTheo / theoWeight) : 0;
+
+  // 3. Dérive = réel - cible (négatif = retard)
+  var derive = avancementReel - cadenceCible;
+
+  // 4. Fiabilité : basée sur le ratio tâches terminées vs théoriquement dues
+  var tasksDue    = allTasks.filter(function(iv){ var e=iv.end||iv.start; return e && new Date(e+'T00:00:00') <= today; });
+  var tasksDone   = tasksDue.filter(function(iv){ return iv.status === 'termine'; });
+  var fiabilite   = tasksDue.length > 0 ? Math.round(tasksDone.length / tasksDue.length * 100) : 100;
+
+  // 5. Projection fin chantier
+  // Trouver la deadline la plus éloignée
+  var maxDeadline = null;
+  (zones||[]).forEach(function(z){ if(z.deadline && (!maxDeadline||z.deadline>maxDeadline)) maxDeadline=z.deadline; });
+  var projectionDays = null;
+  if (maxDeadline && avancementReel < 100) {
+    var deadlineDate = new Date(maxDeadline+'T00:00:00');
+    var daysToDeadline = Math.round((deadlineDate - today) / 86400000);
+    // Cadence journalière réelle vs nécessaire
+    var startProject = allTasks.reduce(function(min, iv){ return iv.start&&iv.start<min?iv.start:min; }, '9999');
+    if (startProject !== '9999') {
+      var startDate = new Date(startProject+'T00:00:00');
+      var totalProjectDays = Math.max(1, Math.round((today - startDate) / 86400000));
+      var dailyRate = avancementReel / totalProjectDays; // % par jour réel
+      var remaining = 100 - avancementReel;
+      var daysNeeded = dailyRate > 0 ? Math.ceil(remaining / dailyRate) : null;
+      if (daysNeeded !== null) {
+        projectionDays = daysNeeded - daysToDeadline; // >0 = retard projeté
+      }
+    }
+  }
+
+  // 6. Zones à risque (dérive + dépendances)
+  var riskyZones = [];
+  (zones||[]).forEach(function(z) {
+    var zTasks = allTasks.filter(function(iv){ return iv.zone === z.id; });
+    var zDue   = zTasks.filter(function(iv){ var e=iv.end||iv.start; return e && new Date(e+'T00:00:00') <= today; });
+    var zDone  = zDue.filter(function(iv){ return iv.status==='termine'; });
+    var zBloc  = zTasks.filter(function(iv){ return iv.status==='bloque'; });
+    var zLate  = zTasks.filter(function(iv){ return effectiveStatus(iv)==='en_retard'; });
+    var zFiab  = zDue.length > 0 ? Math.round(zDone.length/zDue.length*100) : 100;
+    var zAvt   = 0, zTheo = 0, zW = 0;
+    zTasks.forEach(function(iv){ var p=computeTaskProgress(iv); zAvt+=p.pct; zTheo+=p.theoretical; zW++; });
+    zAvt  = zW>0 ? Math.round(zAvt/zW) : 0;
+    zTheo = zW>0 ? Math.round(zTheo/zW) : 0;
+    var zDerive = zAvt - zTheo;
+    var risk = 0;
+    if (zLate.length > 0)  risk += 40;
+    if (zBloc.length > 0)  risk += 30;
+    if (zDerive < -15)     risk += 20;
+    if (z.deadline) {
+      var dl = new Date(z.deadline+'T00:00:00');
+      var dj = Math.round((dl - today)/86400000);
+      if (dj < 0)  risk += 30;
+      else if (dj < 7) risk += 20;
+      else if (dj < 14) risk += 10;
+    }
+    if (risk >= 30) {
+      riskyZones.push({
+        zone: z,
+        risk: Math.min(100, risk),
+        derive: zDerive,
+        blocked: zBloc.length,
+        late: zLate.length,
+        avancement: zAvt,
+        cadence: zTheo
+      });
+    }
+  });
+  riskyZones.sort(function(a,b){ return b.risk - a.risk; });
+
+  // 7. Alertes critiques (max 3)
+  var alertes = [];
+  if (projectionDays !== null && projectionDays > 7) {
+    alertes.push({ type:'danger', msg:'Livraison estimée avec +'+projectionDays+'j de retard au rythme actuel' });
+  }
+  var critBloc = allTasks.filter(function(iv){ return iv.status==='bloque' && (iv.priority===1||iv.priority===2); });
+  if (critBloc.length > 0) {
+    alertes.push({ type:'danger', msg: critBloc.length+' tâche(s) critique(s) bloquée(s) — intervention requise' });
+  }
+  if (derive < -20) {
+    alertes.push({ type:'warning', msg:'Dérive planning : cadence en dessous de l\'objectif de '+Math.abs(derive)+'%' });
+  }
+  if (riskyZones.length > 0 && alertes.length < 3) {
+    alertes.push({ type:'warning', msg:'Zone à risque : '+riskyZones[0].zone.short+' ('+riskyZones[0].late+' retard(s), '+riskyZones[0].blocked+' bloquée(s))' });
+  }
+
+  return { avancementReel, cadenceCible, derive, fiabilite, projectionDays, riskyZones, alertes };
+}
+
+/**
+ * Détecte la propagation de dérive dans les chaînes de dépendances.
+ * Retourne une liste de { source, affected, delayDays }
+ */
+function detectRiskPropagation(data) {
+  var chains = [];
+  var today = new Date(); today.setHours(0,0,0,0);
+  var dataMap = {};
+  (data||[]).forEach(function(iv){ dataMap[iv.id] = iv; });
+
+  (data||[]).forEach(function(iv) {
+    if (!iv.predecessor_id) return;
+    var pred = dataMap[iv.predecessor_id];
+    if (!pred) return;
+    // Si le prédécesseur est en retard ou bloqué, et que le successeur n'est pas terminé
+    var predLate = effectiveStatus(pred) === 'en_retard' || pred.status === 'bloque';
+    var succNotDone = iv.status !== 'termine';
+    if (predLate && succNotDone) {
+      var predEnd = pred.end ? new Date(pred.end+'T00:00:00') : null;
+      var delay = predEnd ? Math.max(0, Math.round((today - predEnd) / 86400000)) : 0;
+      chains.push({ source: pred, affected: iv, delayDays: delay });
+    }
+  });
+
+  return chains;
+}
+
 function getStatusThemeMeta(status) {
   var base = STATUS_META[status] || STATUS_META.arealis;
   if (!planifyIsDarkTheme()) return base;
@@ -8014,6 +8216,16 @@ function buildWeekRecapCanvas(data, zones, trades, companies, note, scope, targe
   var globalBloc  = weekTasks.filter(function(iv){ return effectiveStatus(iv)==='bloque'; }).length;
   var globalPct   = weekTasks.length ? Math.round(globalDone/weekTasks.length*100) : 0;
 
+  // ── Moteur d'avancement temporel (nouveau) ──
+  var health = computeProjectHealth(srcData, zones);
+  var riskChains = detectRiskPropagation(srcData);
+  // Avancement semaine par moteur temporel (scope)
+  var wkAvtTotal=0, wkTheoTotal=0, wkW=0;
+  weekTasks.forEach(function(iv){ var p=computeTaskProgress(iv); wkAvtTotal+=p.pct; wkTheoTotal+=p.theoretical; wkW++; });
+  var wkAvtReel = wkW>0 ? Math.round(wkAvtTotal/wkW) : 0;
+  var wkCadence = wkW>0 ? Math.round(wkTheoTotal/wkW) : 0;
+  var wkDerive  = wkAvtReel - wkCadence;
+
   // ── Build table rows ──
   var tableRows = [];
 
@@ -8044,7 +8256,10 @@ function buildWeekRecapCanvas(data, zones, trades, companies, note, scope, targe
       var done   = coWeek.filter(function(iv){ return effectiveStatus(iv)==='termine'; }).length;
       var late   = coWeek.filter(function(iv){ return effectiveStatus(iv)==='en_retard'; }).length;
       var bloque = coWeek.filter(function(iv){ return effectiveStatus(iv)==='bloque'; }).length;
-      var pct    = coWeek.length ? Math.round(done/coWeek.length*100) : 0;
+      // Avancement temporel pondéré (moteur)
+      var avtTotal=0, avtW=0;
+      coWeek.forEach(function(iv){ var p=computeTaskProgress(iv); avtTotal+=p.pct; avtW++; });
+      var pct = avtW>0 ? Math.round(avtTotal/avtW) : (coWeek.length ? Math.round(done/coWeek.length*100) : 0);
       var coAll  = srcData.filter(function(iv){ return iv.company===coName && effectiveStatus(iv)!=='termine'; });
       var latestTask = coAll.length ? coAll.reduce(function(a,iv){ return (iv.end||iv.start)>(a.end||a.start)?iv:a; }) : null;
       var tradeId = (coWeek[0]||{}).trade;
@@ -8072,15 +8287,21 @@ function buildWeekRecapCanvas(data, zones, trades, companies, note, scope, targe
 
   // ── Canvas layout ──
   var W = 750, SCALE = 2, PAD = 22;
-  var HDR_H = 90, KPI_H = 72, CO_ROW_H = 30, ZN_ROW_H = 38, GAP = 12;
+  var HDR_H = 90, KPI_H = 80, CO_ROW_H = 30, ZN_ROW_H = 38, GAP = 12;
+  var COCKPIT_H = 58; // row 2: cadence + dérive + fiabilité
+  var PROJ_H = 48;    // projection fin chantier
   var CO_TABLE_H = 28 + Math.max(1, tableRows.length) * CO_ROW_H;
   var ZN_TABLE_H = Math.max(0, zoneRows.length) * ZN_ROW_H;
-  var alertBanner = globalLate>0||globalBloc>0;
-  var ALERT_H = alertBanner ? 48 : 0;
+  var alertBanner = health.alertes.length > 0;
+  var ALERT_H = alertBanner ? (14 + health.alertes.length*20 + 14) : 0;
+  var riskBanner = health.riskyZones.length > 0;
+  var RISK_H = riskBanner ? (14 + Math.min(2,health.riskyZones.length)*32 + 10) : 0;
   var noteStr = note && String(note).trim();
   var NOTE_H  = noteStr ? 60 : 0;
-  var totalH  = PAD + HDR_H + GAP + KPI_H + GAP + 20 + CO_TABLE_H + GAP + 20 + ZN_TABLE_H
-              + (alertBanner?GAP+ALERT_H:0) + (noteStr?GAP+NOTE_H:0) + GAP + 36 + PAD;
+  var totalH  = PAD + HDR_H + GAP + KPI_H + GAP + COCKPIT_H + GAP + PROJ_H + GAP
+              + 20 + CO_TABLE_H + GAP + 20 + ZN_TABLE_H
+              + (alertBanner?GAP+ALERT_H:0) + (riskBanner?GAP+RISK_H:0)
+              + (noteStr?GAP+NOTE_H:0) + GAP + 36 + PAD;
 
   var canvas = document.createElement('canvas');
   canvas.width  = W * SCALE;
@@ -8121,27 +8342,77 @@ function buildWeekRecapCanvas(data, zones, trades, companies, note, scope, targe
   ctx.textAlign = 'left';
   y += HDR_H + GAP;
 
-  // ── KPI CARDS ──
-  var kpiW = Math.floor((W-PAD*2-GAP*2)/3);
-  var kpiX = [PAD, PAD+kpiW+GAP, PAD+(kpiW+GAP)*2];
-  var pctColor = globalPct>=80?'#16A34A':globalPct>=50?'#2563EB':'#EA580C';
-  var minWD = (function(){ var arr=(zones||[]).filter(function(z){return z.deadline;}).map(function(z){return typeof workingDaysUntil==='function'?workingDaysUntil(z.deadline):99;}); var mn=arr.length?Math.min.apply(null,arr.filter(function(v){return v>=0;})):null; return mn!==null?'J-'+mn:'\u2014'; })();
-  var kpis2 = [
-    { v:globalPct+'%',       lbl:'r\u00e9alis\u00e9 cette semaine',   sub:globalDone+'/'+weekTasks.length+' t\u00e2ches',                  color:pctColor },
-    { v:globalLate>0?globalLate:globalBloc>0?globalBloc:'✓', lbl:globalLate>0?'en retard':globalBloc>0?'bloqu\u00e9e(s)':'Aucun retard', sub:(globalLate>0?globalBloc+' bloqu\u00e9e(s)':weekTasks.length+' t\u00e2ches OK'),  color:globalLate>0?'#EA580C':globalBloc>0?'#DC2626':'#16A34A' },
-    { v:minWD,               lbl:'avant deadline la + proche',          sub:(zones||[]).filter(function(z){return z.deadline;}).length+' zones',   color:'#DC2626' },
+  // ── KPI COCKPIT — ROW 1 : 4 grands KPIs ──
+  var kpi4W = Math.floor((W-PAD*2-GAP*3)/4);
+  var kpi4X = [PAD, PAD+kpi4W+GAP, PAD+(kpi4W+GAP)*2, PAD+(kpi4W+GAP)*3];
+
+  var avtColor  = health.avancementReel>=80?'#16A34A':health.avancementReel>=50?'#2563EB':'#EA580C';
+  var cadColor  = '#6B7280';
+  var derColor  = health.derive>0?'#16A34A':health.derive>-10?'#EA580C':'#DC2626';
+  var fibColor  = health.fiabilite>=80?'#16A34A':health.fiabilite>=60?'#EA580C':'#DC2626';
+
+  var kpi4s = [
+    { v:health.avancementReel+'%', lbl:'Avancement réel',   sub:'moteur temporel',               color:avtColor,  accentBg:'rgba(22,163,74,.08)'   },
+    { v:health.cadenceCible+'%',   lbl:'Cadence cible',      sub:'objectif planning',             color:cadColor,  accentBg:'rgba(107,114,128,.08)' },
+    { v:(health.derive>0?'+':'')+health.derive+'%', lbl:'Dérive planning',   sub:health.derive>0?'en avance':health.derive===0?'dans les temps':'en retard', color:derColor, accentBg: health.derive<0?'rgba(220,38,38,.07)':'rgba(22,163,74,.07)' },
+    { v:health.fiabilite+'%',      lbl:'Fiabilité semaine',  sub:'tâches livrées vs dues',        color:fibColor,  accentBg:'rgba(37,99,235,.08)'   },
   ];
-  kpis2.forEach(function(k,i){
-    ctx.fillStyle = '#FFFFFF'; _cvRoundRect(ctx, kpiX[i], y, kpiW, KPI_H, 8, true, false);
-    ctx.fillStyle = '#E8E4DC'; ctx.lineWidth = 0.8; _cvRoundRect(ctx, kpiX[i], y, kpiW, KPI_H, 8, false, true);
-    ctx.fillStyle = k.color; ctx.font = 'bold 26px '+FONT; ctx.textAlign = 'center';
-    ctx.fillText(String(k.v), kpiX[i]+kpiW/2, y+38);
+  kpi4s.forEach(function(k,i){
+    ctx.fillStyle = '#FFFFFF'; _cvRoundRect(ctx, kpi4X[i], y, kpi4W, KPI_H, 8, true, false);
+    if (k.accentBg) { ctx.fillStyle = k.accentBg; _cvRoundRect(ctx, kpi4X[i], y, kpi4W, KPI_H, 8, true, false); }
+    ctx.fillStyle = '#E8E4DC'; ctx.lineWidth = 0.8; _cvRoundRect(ctx, kpi4X[i], y, kpi4W, KPI_H, 8, false, true);
+    ctx.fillStyle = k.color; ctx.font = 'bold 24px '+FONT; ctx.textAlign = 'center';
+    ctx.fillText(String(k.v), kpi4X[i]+kpi4W/2, y+38);
     ctx.fillStyle = '#6B6860'; ctx.font = '10px '+FONT;
-    ctx.fillText(k.lbl, kpiX[i]+kpiW/2, y+54);
-    if (k.sub) { ctx.fillStyle = '#ABA8A0'; ctx.font = '9px '+MONO; ctx.fillText(k.sub, kpiX[i]+kpiW/2, y+66); }
+    ctx.fillText(k.lbl, kpi4X[i]+kpi4W/2, y+54);
+    if (k.sub) { ctx.fillStyle = k.color; ctx.font = 'bold 8px '+MONO; ctx.fillText(k.sub.toUpperCase(), kpi4X[i]+kpi4W/2, y+70); }
     ctx.textAlign = 'left';
   });
   y += KPI_H + GAP;
+
+  // ── KPI COCKPIT — ROW 2 : bar comparaison Avancement vs Cadence ──
+  ctx.fillStyle = '#FFFFFF'; _cvRoundRect(ctx, PAD, y, W-PAD*2, COCKPIT_H, 8, true, false);
+  ctx.fillStyle = '#E8E4DC'; ctx.lineWidth=0.8; _cvRoundRect(ctx, PAD, y, W-PAD*2, COCKPIT_H, 8, false, true);
+  ctx.fillStyle = '#6B6860'; ctx.font = 'bold 9px '+MONO;
+  ctx.fillText('AVANCEMENT RÉEL vs CADENCE CIBLE — COMPARAISON GRAPHIQUE', PAD+12, y+14);
+  var barAreaW = W - PAD*2 - 24 - 90;
+  // Bar cible (gris)
+  ctx.fillStyle = '#E8E4DC'; _cvRoundRect(ctx, PAD+12, y+22, barAreaW, 9, 4, true, false);
+  // Fill cible
+  if (health.cadenceCible > 0) {
+    ctx.fillStyle = '#CBD5E1'; _cvRoundRect(ctx, PAD+12, y+22, Math.max(4, barAreaW*health.cadenceCible/100), 9, 4, true, false);
+  }
+  // Bar réel (colorée) par-dessus, plus fine
+  ctx.fillStyle = '#F4F2EE'; _cvRoundRect(ctx, PAD+12, y+28, barAreaW, 9, 4, true, false);
+  if (health.avancementReel > 0) {
+    ctx.fillStyle = avtColor; _cvRoundRect(ctx, PAD+12, y+28, Math.max(4, barAreaW*health.avancementReel/100), 9, 4, true, false);
+  }
+  // Labels
+  ctx.fillStyle = '#9CA3AF'; ctx.font = '8px '+MONO; ctx.textAlign='right';
+  ctx.fillText('CIBLE '+health.cadenceCible+'%', W-PAD-4, y+29);
+  ctx.fillStyle = avtColor; ctx.font = 'bold 8px '+MONO;
+  ctx.fillText('RÉEL '+health.avancementReel+'%', W-PAD-4, y+43);
+  ctx.textAlign='left';
+  y += COCKPIT_H + GAP;
+
+  // ── PROJECTION FIN CHANTIER ──
+  var projColor = health.projectionDays===null?'#6B7280':health.projectionDays<=0?'#16A34A':health.projectionDays<=7?'#EA580C':'#DC2626';
+  var projLabel = health.projectionDays===null ? 'Projection : données insuffisantes'
+    : health.projectionDays <= 0  ? 'Livraison maintenable au rythme actuel'
+    : 'Au rythme actuel : dérive estimée +'+health.projectionDays+' j.';
+  ctx.fillStyle = projColor==='#16A34A'?'rgba(22,163,74,.09)':'rgba(220,38,38,.07)';
+  _cvRoundRect(ctx, PAD, y, W-PAD*2, PROJ_H, 8, true, false);
+  ctx.strokeStyle = projColor; ctx.lineWidth=0.8; _cvRoundRect(ctx, PAD, y, W-PAD*2, PROJ_H, 8, false, true);
+  ctx.fillStyle = projColor; ctx.font = 'bold 9px '+MONO;
+  ctx.fillText('PROJECTION LIVRAISON', PAD+12, y+14);
+  ctx.fillStyle = '#1A1A1A'; ctx.font = 'bold 13px '+FONT;
+  ctx.fillText(projLabel, PAD+12, y+34);
+  if (health.riskyZones.length > 0) {
+    ctx.fillStyle = '#9CA3AF'; ctx.font = '9px '+MONO; ctx.textAlign='right';
+    ctx.fillText(health.riskyZones.length+' zone(s) à risque détectée(s)', W-PAD-8, y+34);
+    ctx.textAlign='left';
+  }
+  y += PROJ_H + GAP;
 
   // ── TABLE (companies OR zones depending on mode) ──
   ctx.fillStyle = '#6B6860'; ctx.font = 'bold 9px '+MONO;
@@ -8158,12 +8429,12 @@ function buildWeekRecapCanvas(data, zones, trades, companies, note, scope, targe
   _cvRoundRect(ctx, PAD, y, W-PAD*2, 28, 6, true, false);
   ctx.fillStyle = '#FFFFFF'; ctx.font = 'bold 8.5px '+MONO;
   var TH = [
-    {l:rowLabel,       x:PAD+14,  tw:175},
-    {l:'PR\u00c9V.',   x:PAD+197, tw:36 },
-    {l:'R\u00c9AL.',   x:PAD+239, tw:36 },
-    {l:'SEMAINE %',    x:PAD+283, tw:160},
-    {l:'RETARD',       x:PAD+454, tw:50 },
-    {l:'DERNIER JALON',x:PAD+510, tw:160},
+    {l:rowLabel,           x:PAD+14,  tw:175},
+    {l:'PR\u00c9V.',       x:PAD+197, tw:36 },
+    {l:'R\u00c9AL.',       x:PAD+239, tw:36 },
+    {l:'AVT. TEMPOREL',   x:PAD+283, tw:160},
+    {l:'RETARD',           x:PAD+454, tw:50 },
+    {l:'DERNIER JALON',   x:PAD+510, tw:160},
   ];
   TH.forEach(function(h){ ctx.fillText(h.l, h.x, y+18); });
   y += 28;
@@ -8224,6 +8495,11 @@ function buildWeekRecapCanvas(data, zones, trades, companies, note, scope, targe
 
   zoneRows.forEach(function(zr) {
     var fc = zr.fc||'#2152C8';
+    // Calcul avancement temporel pour cette zone (scoped)
+    var zvTasks = srcData.filter(function(iv){ return iv.zone===zr.zone.id; });
+    var zvAvtT=0, zvW=0;
+    zvTasks.forEach(function(iv){ var p=computeTaskProgress(iv); zvAvtT+=p.pct; zvW++; });
+    var zvAvt = zvW>0 ? Math.round(zvAvtT/zvW) : zr.allPct;
     ctx.fillStyle = '#FFFFFF'; _cvRoundRect(ctx, PAD, y, W-PAD*2, ZN_ROW_H-4, 6, true, false);
     ctx.fillStyle = fc; ctx.fillRect(PAD, y, 5, ZN_ROW_H-4);
     ctx.fillStyle = fc; ctx.font = 'bold 9px '+MONO;
@@ -8232,10 +8508,10 @@ function buildWeekRecapCanvas(data, zones, trades, companies, note, scope, targe
     ctx.fillText(_cvTrunc(zr.zone.name.split('\u2014').pop().trim(), 34), PAD+12+52, y+14);
     var bX=PAD+12, bY=y+20, bW=W-PAD*2-24-110, bH=6;
     ctx.fillStyle='#E8E4DC'; _cvRoundRect(ctx, bX, bY, bW, bH, 3, true, false);
-    var pcolor = zr.allPct===100?'#16A34A':zr.lateN>0?'#EA580C':'#2563EB';
-    if (zr.allPct>0){ ctx.fillStyle=pcolor; _cvRoundRect(ctx, bX, bY, Math.max(6,bW*zr.allPct/100), bH, 3, true, false); }
+    var pcolor = zvAvt===100?'#16A34A':zr.lateN>0?'#EA580C':'#2563EB';
+    if (zvAvt>0){ ctx.fillStyle=pcolor; _cvRoundRect(ctx, bX, bY, Math.max(6,bW*zvAvt/100), bH, 3, true, false); }
     ctx.textAlign='right';
-    ctx.fillStyle=pcolor; ctx.font='bold 13px '+FONT; ctx.fillText(zr.allPct+'%', W-PAD-4, y+14);
+    ctx.fillStyle=pcolor; ctx.font='bold 13px '+FONT; ctx.fillText(zvAvt+'%', W-PAD-4, y+14);
     ctx.fillStyle='#9CA3AF'; ctx.font='9px '+MONO; ctx.fillText(zr.srcDone+'/'+zr.srcTotal+' t\u00e2ches', W-PAD-4, y+28);
     if (zr.zone.deadline && zr.wd!==null) {
       var dlC=zr.wd<0?'#DC2626':zr.wd<7?'#DC2626':zr.wd<15?'#EA580C':'#16A34A';
@@ -8248,18 +8524,50 @@ function buildWeekRecapCanvas(data, zones, trades, companies, note, scope, targe
     y += ZN_ROW_H;
   });
 
-  // ── ALERT BANNER ──
+  // ── ZONES À RISQUE (propagation de dérive) ──
+  if (riskBanner && health.riskyZones.length > 0) {
+    y += GAP;
+    var displayRisk = health.riskyZones.slice(0, 2);
+    var RISK_ROW = 32;
+    ctx.fillStyle='rgba(220,38,38,.06)'; _cvRoundRect(ctx, PAD, y, W-PAD*2, RISK_H, 8, true, false);
+    ctx.strokeStyle='#DC2626'; ctx.lineWidth=0.8; _cvRoundRect(ctx, PAD, y, W-PAD*2, RISK_H, 8, false, true);
+    ctx.fillStyle='#991B1B'; ctx.font='bold 9px '+MONO;
+    ctx.fillText('\u26d4 ZONES \u00c0 RISQUE \u2014 PROPAGATION DE D\u00c9RIVE', PAD+12, y+14);
+    displayRisk.forEach(function(rz, ri) {
+      var ry = y + 18 + ri * RISK_ROW;
+      ctx.fillStyle='#1A1A1A'; ctx.font='bold 10px '+FONT;
+      ctx.fillText(rz.zone.short, PAD+12, ry+16);
+      ctx.fillStyle='#6B6860'; ctx.font='9px '+FONT;
+      ctx.fillText(rz.zone.name.split('\u2014').pop().trim(), PAD+65, ry+16);
+      if (rz.blocked>0) {
+        ctx.fillStyle='#DC2626'; ctx.font='bold 9px '+MONO;
+        ctx.fillText(rz.blocked+' BLOQ.', PAD+300, ry+16);
+      }
+      if (rz.late>0) {
+        ctx.fillStyle='#EA580C'; ctx.font='bold 9px '+MONO;
+        ctx.fillText(rz.late+' RETARD', PAD+360, ry+16);
+      }
+      var derStr = (rz.derive>0?'+':'')+rz.derive+'%';
+      ctx.fillStyle=rz.derive<0?'#DC2626':'#16A34A'; ctx.font='bold 9px '+MONO; ctx.textAlign='right';
+      ctx.fillText('D\u00c9RIVE '+derStr, W-PAD-8, ry+16);
+      ctx.textAlign='left';
+    });
+    y += RISK_H;
+  }
+
+  // ── ALERTES CRITIQUES ──
   if (alertBanner) {
     y += GAP;
-    ctx.fillStyle='#FEF3C7'; _cvRoundRect(ctx, PAD, y, W-PAD*2, ALERT_H, 8, true, false);
+    ctx.fillStyle='#FFFBEB'; _cvRoundRect(ctx, PAD, y, W-PAD*2, ALERT_H, 8, true, false);
     ctx.strokeStyle='#D97706'; ctx.lineWidth=0.8; _cvRoundRect(ctx, PAD, y, W-PAD*2, ALERT_H, 8, false, true);
-    ctx.fillStyle='#92400E'; ctx.font='bold 11px '+FONT;
-    ctx.fillText('\u26a0 Points d\'attention', PAD+12, y+18);
-    var alertParts=[];
-    if (globalLate>0) alertParts.push(globalLate+' t\u00e2che'+(globalLate>1?'s':'')+' en retard');
-    if (globalBloc>0) alertParts.push(globalBloc+' t\u00e2che'+(globalBloc>1?'s':'')+' bloqu\u00e9e'+(globalBloc>1?'s':''));
-    ctx.fillStyle='#78350F'; ctx.font='10px '+FONT;
-    ctx.fillText(alertParts.join(' \u00b7 '), PAD+12, y+34);
+    ctx.fillStyle='#92400E'; ctx.font='bold 9px '+MONO;
+    ctx.fillText('\u26a0 ALERTES CRITIQUES', PAD+12, y+14);
+    health.alertes.forEach(function(a, ai) {
+      var aly = y + 14 + (ai+1)*20;
+      ctx.fillStyle = a.type==='danger' ? '#DC2626' : '#EA580C';
+      ctx.font = 'bold 10px '+FONT;
+      ctx.fillText((a.type==='danger'?'\u25cf ':'\u25b2 ') + _cvTrunc(a.msg, 68), PAD+12, aly);
+    });
     y += ALERT_H;
   }
 
@@ -8910,7 +9218,7 @@ function BriefingsScreen({ data, zones, trades, companies, session }) {
         <div style={{fontSize:13,color:'var(--muted)',lineHeight:1.45}}>Briefings hebdomadaires + récap projet pour vos parties prenantes.</div>
       </div>
 
-      {/* ── Récap fin de semaine ── */}
+      {/* ── Récap fin de semaine — COCKPIT ── */}
       {(function(){
         var today = new Date();
         var dow = today.getDay();
@@ -8920,45 +9228,141 @@ function BriefingsScreen({ data, zones, trades, companies, session }) {
         var FR_MNTHS2 = ['jan.','\u0066\u00e9v.','mar.','avr.','mai','juin','juil.','\u0061\u00f4\u00fbt','sep.','oct.','nov.','\u0064\u00e9c.'];
         function fmtD2(d){ return d.getDate()+' '+FR_MNTHS2[d.getMonth()]; }
         var todayName = FR_DAYS2[today.getDay()];
-        function ds2(d){ return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
-        var monStr2=ds2(mon), friStr2=ds2(fri);
-        function inWeek2(iv){ var s=iv.start||'',e=iv.end||s; return s<=friStr2&&e>=monStr2; }
-        var wkTasks = (data||[]).filter(inWeek2);
-        var wkDone = wkTasks.filter(function(iv){ return effectiveStatus(iv)==='termine'; }).length;
-        var wkLate = wkTasks.filter(function(iv){ return effectiveStatus(iv)==='en_retard'; }).length;
-        var wkBloc = wkTasks.filter(function(iv){ return effectiveStatus(iv)==='bloque'; }).length;
-        var wkPct  = wkTasks.length ? Math.round(wkDone/wkTasks.length*100) : 0;
-        var pctCol = wkPct>=80?'#16A34A':wkPct>=50?'#2563EB':'#EA580C';
+
+        // Moteur d'avancement temporel
+        var ph = computeProjectHealth(data||[], zones||[]);
+        var riskChains2 = detectRiskPropagation(data||[]);
+
+        var avtCol  = ph.avancementReel>=80?'#16A34A':ph.avancementReel>=50?'#2563EB':'#EA580C';
+        var derCol  = ph.derive>0?'#16A34A':ph.derive>-10?'#EA580C':'#DC2626';
+        var fibCol  = ph.fiabilite>=80?'#16A34A':ph.fiabilite>=60?'#EA580C':'#DC2626';
+        var projCol = ph.projectionDays===null?'var(--muted)':ph.projectionDays<=0?'#16A34A':ph.projectionDays<=7?'#EA580C':'#DC2626';
+
+        var projTxt = ph.projectionDays===null ? '—'
+          : ph.projectionDays<=0 ? 'Dans les temps'
+          : '+'+ph.projectionDays+'j';
+
         return (
           <div style={{background:'var(--surface)',border:'1px solid var(--border)',borderRadius:'var(--r)',marginBottom:14,overflow:'hidden',boxShadow:'var(--shadow)'}}>
+            {/* Header barre sombre */}
             <div style={{background:'#1A1A1A',padding:'11px 14px',display:'flex',alignItems:'center',gap:10}}>
               <div style={{flex:1}}>
-                <div style={{fontSize:13,fontWeight:700,color:'#FFFFFF'}}>Récap fin de semaine</div>
-                <div style={{fontSize:10,color:'#9CA3AF',marginTop:2}}>{todayName+' '+fmtD2(today)+' · Sem. du '+fmtD2(mon)+' au '+fmtD2(fri)}</div>
+                <div style={{fontSize:13,fontWeight:700,color:'#FFFFFF'}}>Cockpit chantier</div>
+                <div style={{fontSize:10,color:'#9CA3AF',marginTop:2}}>{todayName+' '+fmtD2(today)+' \u00b7 Sem. du '+fmtD2(mon)+' au '+fmtD2(fri)}</div>
               </div>
               <button onClick={function(){ setRecapPreviewOpen(true); }}
                 style={{background:'#2152C8',color:'#fff',border:'none',
                   borderRadius:8,padding:'9px 14px',fontSize:12,fontWeight:700,
                   cursor:'pointer',display:'flex',alignItems:'center',gap:7,flexShrink:0,
                   fontFamily:"'DM Sans',sans-serif"}}>
-                {'👁 Aperçu + export'}
+                {'\uD83D\uDC41 Aper\u00e7u + export'}
               </button>
             </div>
-            <div style={{display:'flex',gap:0,borderTop:'1px solid var(--border)'}}>
+
+            {/* KPI row 1 — 4 indicateurs */}
+            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr 1fr',borderBottom:'1px solid var(--border)'}}>
               {[
-                {v:wkPct+'%', lbl:'réalisé cette semaine', c:pctCol},
-                {v:wkDone+'/'+wkTasks.length, lbl:'tâches prévues', c:'var(--text)'},
-                {v:wkLate>0?wkLate:wkBloc>0?wkBloc:'\u2713', lbl:wkLate>0?'en retard':wkBloc>0?'bloqu\u00e9e(s)':'Tout OK', c:wkLate>0?'#EA580C':wkBloc>0?'#DC2626':'#16A34A'},
+                {v:ph.avancementReel+'%', lbl:'Avancement réel',  sub:'moteur temporel',  c:avtCol, bg:ph.avancementReel>=80?'rgba(22,163,74,.06)':ph.avancementReel>=50?'rgba(37,99,235,.05)':'rgba(234,88,12,.05)'},
+                {v:ph.cadenceCible+'%',   lbl:'Cadence cible',    sub:'objectif planning', c:'var(--muted)', bg:'transparent'},
+                {v:(ph.derive>0?'+':'')+ph.derive+'%', lbl:'Dérive planning', sub:ph.derive>0?'en avance':ph.derive===0?'dans les temps':'en retard', c:derCol, bg:ph.derive<-10?'rgba(220,38,38,.05)':ph.derive>0?'rgba(22,163,74,.05)':'transparent'},
+                {v:ph.fiabilite+'%',      lbl:'Fiabilité semaine', sub:'tâches livrées vs dues', c:fibCol, bg:'transparent'},
               ].map(function(k,i){
                 return (
-                  <div key={i} style={{flex:1,padding:'10px 12px',textAlign:'center',
-                    borderRight:i<2?'1px solid var(--border)':'none'}}>
-                    <div style={{fontFamily:"'DM Mono',monospace",fontSize:20,fontWeight:900,color:k.c,lineHeight:1}}>{k.v}</div>
-                    <div style={{fontSize:10,color:'var(--muted)',marginTop:4,fontWeight:600}}>{k.lbl}</div>
+                  <div key={i} style={{padding:'12px 8px',textAlign:'center',
+                    borderRight:i<3?'1px solid var(--border)':'none',
+                    background:k.bg}}>
+                    <div style={{fontFamily:"'DM Mono',monospace",fontSize:20,fontWeight:900,color:k.c,lineHeight:1.1}}>{k.v}</div>
+                    <div style={{fontSize:10,color:'var(--text)',marginTop:4,fontWeight:700,lineHeight:1.2}}>{k.lbl}</div>
+                    <div style={{fontSize:9,color:k.c,marginTop:2,fontWeight:600,fontFamily:"'DM Mono',monospace",textTransform:'uppercase'}}>{k.sub}</div>
                   </div>
                 );
               })}
             </div>
+
+            {/* Barre graphique Avancement vs Cadence */}
+            <div style={{padding:'10px 14px',borderBottom:'1px solid var(--border)',background:'var(--surface-2)'}}>
+              <div style={{display:'flex',justifyContent:'space-between',marginBottom:4}}>
+                <span style={{fontSize:9,fontWeight:700,fontFamily:"'DM Mono',monospace",color:'var(--muted)',textTransform:'uppercase',letterSpacing:'.05em'}}>Avancement réel vs cadence cible</span>
+                <span style={{fontSize:9,fontWeight:700,fontFamily:"'DM Mono',monospace",color:derCol}}>{ph.derive>0?'+':''}{ph.derive}%</span>
+              </div>
+              {/* Barre cible */}
+              <div style={{position:'relative',height:8,borderRadius:4,background:'var(--border)',marginBottom:4,overflow:'visible'}}>
+                <div style={{position:'absolute',left:0,top:0,height:'100%',borderRadius:4,
+                  width:ph.cadenceCible+'%',background:'#CBD5E1',transition:'width .3s'}}/>
+              </div>
+              {/* Barre réelle */}
+              <div style={{position:'relative',height:8,borderRadius:4,background:'var(--border)',overflow:'visible'}}>
+                <div style={{position:'absolute',left:0,top:0,height:'100%',borderRadius:4,
+                  width:ph.avancementReel+'%',background:avtCol,transition:'width .3s'}}/>
+              </div>
+              <div style={{display:'flex',justifyContent:'space-between',marginTop:4}}>
+                <span style={{fontSize:8,color:'#9CA3AF',fontFamily:"'DM Mono',monospace"}}>CIBLE {ph.cadenceCible}%</span>
+                <span style={{fontSize:8,color:avtCol,fontFamily:"'DM Mono',monospace",fontWeight:700}}>RÉEL {ph.avancementReel}%</span>
+              </div>
+            </div>
+
+            {/* Projection fin chantier */}
+            <div style={{padding:'10px 14px',background:ph.projectionDays!==null&&ph.projectionDays>7?'rgba(220,38,38,.04)':'transparent',
+              borderBottom: ph.alertes.length>0||ph.riskyZones.length>0 ? '1px solid var(--border)':'none',
+              display:'flex',alignItems:'center',gap:10}}>
+              <div style={{flex:1}}>
+                <div style={{fontSize:9,fontWeight:700,fontFamily:"'DM Mono',monospace",color:'var(--muted)',textTransform:'uppercase',letterSpacing:'.05em',marginBottom:2}}>Projection livraison</div>
+                <div style={{fontSize:12,fontWeight:700,color:projCol}}>
+                  {ph.projectionDays===null ? 'Données insuffisantes'
+                   : ph.projectionDays<=0 ? '\u2713 Livraison maintenable au rythme actuel'
+                   : '\u26a0 D\u00e9rive estim\u00e9e : +'+ph.projectionDays+' jours au rythme actuel'}
+                </div>
+              </div>
+              {ph.riskyZones.length>0 && (
+                <div style={{background:'rgba(220,38,38,.1)',border:'1px solid rgba(220,38,38,.3)',borderRadius:6,padding:'4px 8px',flexShrink:0}}>
+                  <div style={{fontSize:9,fontWeight:700,color:'#DC2626',fontFamily:"'DM Mono',monospace"}}>{ph.riskyZones.length} zone(s) à risque</div>
+                </div>
+              )}
+            </div>
+
+            {/* Zones à risque */}
+            {ph.riskyZones.length>0 && (
+              <div style={{padding:'8px 14px',borderBottom:'1px solid var(--border)',background:'rgba(220,38,38,.03)'}}>
+                <div style={{fontSize:9,fontWeight:700,fontFamily:"'DM Mono',monospace",color:'#991B1B',textTransform:'uppercase',letterSpacing:'.05em',marginBottom:6}}>
+                  \u26d4 Zones à risque \u2014 Propagation de dérive
+                </div>
+                {ph.riskyZones.slice(0,3).map(function(rz, ri){
+                  var fc = getZoneFloorColor(rz.zone, zones||[]);
+                  return (
+                    <div key={ri} style={{display:'flex',alignItems:'center',gap:8,padding:'5px 0',
+                      borderBottom:ri<Math.min(2,ph.riskyZones.length-1)?'1px solid var(--border)':'none'}}>
+                      <div style={{width:8,height:8,borderRadius:2,background:fc,flexShrink:0}}/>
+                      <div style={{flex:1,minWidth:0}}>
+                        <span style={{fontSize:10,fontWeight:700,color:'var(--text)',fontFamily:"'DM Mono',monospace"}}>{rz.zone.short}</span>
+                        <span style={{fontSize:10,color:'var(--muted)',marginLeft:6}}>{rz.zone.name.split('\u2014').pop().trim()}</span>
+                      </div>
+                      <div style={{display:'flex',gap:6,alignItems:'center',flexShrink:0}}>
+                        {rz.blocked>0&&<span style={{fontSize:9,fontWeight:700,fontFamily:"'DM Mono',monospace",color:'#DC2626',background:'rgba(220,38,38,.1)',border:'1px solid rgba(220,38,38,.3)',borderRadius:3,padding:'1px 5px'}}>{rz.blocked} BLOQ.</span>}
+                        {rz.late>0&&<span style={{fontSize:9,fontWeight:700,fontFamily:"'DM Mono',monospace",color:'#EA580C',background:'rgba(234,88,12,.1)',border:'1px solid rgba(234,88,12,.3)',borderRadius:3,padding:'1px 5px'}}>{rz.late} RETARD</span>}
+                        <span style={{fontSize:9,fontWeight:700,fontFamily:"'DM Mono',monospace",color:rz.derive<0?'#DC2626':'#16A34A'}}>{rz.derive>0?'+':''}{rz.derive}%</span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            {/* Alertes critiques */}
+            {ph.alertes.length>0 && (
+              <div style={{padding:'8px 14px',background:'rgba(217,119,6,.05)'}}>
+                <div style={{fontSize:9,fontWeight:700,fontFamily:"'DM Mono',monospace",color:'#92400E',textTransform:'uppercase',letterSpacing:'.05em',marginBottom:5}}>
+                  \u26a0 Alertes critiques
+                </div>
+                {ph.alertes.slice(0,3).map(function(a,ai){
+                  return (
+                    <div key={ai} style={{display:'flex',alignItems:'flex-start',gap:6,marginBottom:ai<ph.alertes.length-1?4:0}}>
+                      <span style={{fontSize:10,color:a.type==='danger'?'#DC2626':'#EA580C',flexShrink:0,marginTop:1}}>{a.type==='danger'?'\u25cf':'\u25b2'}</span>
+                      <span style={{fontSize:11,color:'var(--text)',fontWeight:500,lineHeight:1.35}}>{a.msg}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </div>
         );
       })()}
