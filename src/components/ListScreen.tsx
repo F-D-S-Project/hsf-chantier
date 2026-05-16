@@ -29,38 +29,57 @@ export default function ListScreen({ interventions, zones, trades, onUpdate }: P
   const weekStart = days[0]
   const weekEnd   = days[6]
 
-  // Filter interventions active this week
+  // Tasks active during the selected week
   const weekItems = interventions.filter(iv => days.some(d => isTaskActiveOn(iv, d)))
 
+  // When on current week: also pull past tasks still en cours / en retard / bloqué
+  const pastItems = weekOffset === 0
+    ? interventions.filter(iv => {
+        if (weekItems.some(w => w.id === iv.id)) return false
+        const end = iv.end_date ?? iv.start_date
+        if (!end || end >= days[0]) return false
+        const es = effectiveStatus(iv)
+        return es === 'encours' || es === 'en_retard' || es === 'bloque'
+      })
+    : []
+
+  const allItems = [...weekItems, ...pastItems]
+
+  const rank = (iv: Intervention) => {
+    const es = effectiveStatus(iv)
+    if (es === 'bloque')    return 0
+    if (es === 'en_retard') return 1
+    if (es === 'encours')   return 2
+    if (es === 'arealis')   return 3
+    if (es === 'termine')   return 5
+    return 9
+  }
+
   // Apply status + trade filters
-  const filtered = weekItems
+  const filtered = allItems
     .filter(iv => filterStatus === 'all' || effectiveStatus(iv) === filterStatus)
     .filter(iv => filterTrade  === 'all' || iv.trade === filterTrade)
     .sort((a, b) => {
-      const rank = (iv: Intervention) => {
-        const es = effectiveStatus(iv)
-        if (es === 'bloque')    return 0
-        if (es === 'en_retard') return 1
-        if (es === 'encours')   return 2
-        if (es === 'arealis')   return 3
-        if (es === 'termine')   return 5
-        return 9
-      }
+      // Current week tasks before past tasks
+      const aInWeek = weekItems.some(w => w.id === a.id)
+      const bInWeek = weekItems.some(w => w.id === b.id)
+      if (aInWeek !== bInWeek) return aInWeek ? -1 : 1
       const ra = rank(a), rb = rank(b)
       if (ra !== rb) return ra - rb
       return (a.start_date ?? '').localeCompare(b.start_date ?? '')
     })
 
-  // Group by date
+  // Group: current week by date, past items under a special key
   const grouped: Record<string, Intervention[]> = {}
   filtered.forEach(iv => {
-    const key = iv.start_date ?? 'sans-date'
+    const inWeek = weekItems.some(w => w.id === iv.id)
+    const key = inWeek ? (iv.start_date ?? 'sans-date') : '__past__'
     if (!grouped[key]) grouped[key] = []
     grouped[key].push(iv)
   })
 
   // Trades active this week (for filter)
-  const activeTrades = trades.filter(t => weekItems.some(iv => iv.trade === t.id))
+  const activeTrades = trades.filter(t => allItems.some(iv => iv.trade === t.id))
 
   // Stats for the week
   const weekDone   = weekItems.filter(iv => iv.status === 'termine').length
@@ -146,15 +165,20 @@ export default function ListScreen({ interventions, zones, trades, onUpdate }: P
           <EmptyState hasFilter={filterStatus !== 'all' || filterTrade !== 'all'} />
         ) : (
           Object.entries(grouped)
-            .sort(([a], [b]) => a.localeCompare(b))
+            .sort(([a], [b]) => {
+              if (a === '__past__') return 1
+              if (b === '__past__') return -1
+              return a.localeCompare(b)
+            })
             .map(([date, ivs]) => (
               <div key={date} style={{ marginBottom: 20 }}>
                 <div style={{
-                  fontSize: 11, fontWeight: 700, color: 'var(--muted)', letterSpacing: '.06em',
+                  fontSize: 11, fontWeight: 700, letterSpacing: '.06em',
                   textTransform: 'uppercase', fontFamily: "'DM Mono', monospace",
-                  marginBottom: 8, paddingBottom: 5, borderBottom: '1px solid var(--border)',
+                  marginBottom: 8, paddingBottom: 5, borderBottom: `1px solid ${date === '__past__' ? '#FCA5A5' : 'var(--border)'}`,
+                  color: date === '__past__' ? '#DC2626' : 'var(--muted)',
                 }}>
-                  {date === 'sans-date' ? 'Sans date' : fmtDateLong(date)}
+                  {date === '__past__' ? '⏱ Semaines précédentes — encore actives' : date === 'sans-date' ? 'Sans date' : fmtDateLong(date)}
                 </div>
                 {ivs.map(iv => (
                   <TaskCard

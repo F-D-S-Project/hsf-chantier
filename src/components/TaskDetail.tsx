@@ -154,7 +154,7 @@ export default function TaskDetail({ iv, zones, trades, allInterventions, onClos
           <div style={{ marginBottom: 14 }}>
             <label style={labelStyle}>Statut</label>
             <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 6 }}>
-              {STATUS_OPTIONS.filter(s => s !== 'en_retard').map(s => {
+              {STATUS_OPTIONS.map(s => {
                 const m = STATUS_META[s]
                 const active = status === s
                 return (
