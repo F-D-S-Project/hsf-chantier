@@ -144,7 +144,9 @@ function DashboardScreen({ zones, interventions, trades, onUpdate }: {
   zones: Zone[]; interventions: Intervention[]; trades: Trade[]
   onUpdate: (id: string, patch: Partial<Intervention>) => void
 }) {
-  const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [selectedId, setSelectedId]       = useState<string | null>(null)
+  const [expandedStatus, setExpandedStatus] = useState<string | null>(null)
+  const [expandedTrade, setExpandedTrade]   = useState<string | null>(null)
   const health = computeProjectHealth(interventions, zones)
   const { avancementReel, cadenceCible, derive, fiabilite, alertes } = health
   const total    = interventions.length
@@ -232,42 +234,59 @@ function DashboardScreen({ zones, interventions, trades, onUpdate }: {
       <Card title="Tâches">
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 6 }}>
           {([
-            { label: 'Total',     value: total,     color: 'var(--primary)' },
-            { label: 'Terminé',   value: termine,   color: STATUS_META.termine.dot },
-            { label: 'En cours',  value: encours,   color: STATUS_META.encours.dot },
-            { label: 'En retard', value: enRetard,  color: STATUS_META.en_retard.dot },
-            { label: 'Bloqué',    value: bloque,    color: STATUS_META.bloque.dot },
-          ]).map(({ label, value, color }) => (
-            <div key={label} style={{ background: 'var(--surface-2)', borderRadius: 'var(--r-sm)', padding: '8px 4px', textAlign: 'center' }}>
-              <div style={{ fontSize: 20, fontWeight: 700, color }}>{value}</div>
-              <div style={{ fontSize: 9, color: 'var(--muted)', marginTop: 2, lineHeight: 1.2 }}>{label}</div>
-            </div>
-          ))}
+            { key: 'total',     label: 'Total',     value: total,    color: 'var(--primary)',        tasks: interventions },
+            { key: 'termine',   label: 'Terminé',   value: termine,  color: STATUS_META.termine.dot,   tasks: interventions.filter(iv => iv.status === 'termine') },
+            { key: 'encours',   label: 'En cours',  value: encours,  color: STATUS_META.encours.dot,   tasks: interventions.filter(iv => iv.status === 'encours') },
+            { key: 'en_retard', label: 'En retard', value: enRetard, color: STATUS_META.en_retard.dot, tasks: interventions.filter(iv => effectiveStatus(iv) === 'en_retard') },
+            { key: 'bloque',    label: 'Bloqué',    value: bloque,   color: STATUS_META.bloque.dot,    tasks: interventions.filter(iv => iv.status === 'bloque') },
+          ]).map(({ key, label, value, color, tasks }) => {
+            const active = expandedStatus === key
+            return (
+              <button key={key} onClick={() => setExpandedStatus(active ? null : key)} style={{
+                background: active ? color + '18' : 'var(--surface-2)',
+                borderRadius: 'var(--r-sm)', padding: '8px 4px', textAlign: 'center',
+                border: `1px solid ${active ? color + '55' : 'transparent'}`,
+                cursor: tasks.length > 0 ? 'pointer' : 'default',
+              }}>
+                <div style={{ fontSize: 20, fontWeight: 700, color }}>{value}</div>
+                <div style={{ fontSize: 9, color: active ? color : 'var(--muted)', marginTop: 2, lineHeight: 1.2, fontWeight: active ? 700 : 400 }}>{label}</div>
+              </button>
+            )
+          })}
         </div>
         {total > 0 && (
           <div style={{ marginTop: 12 }}>
             <div style={{ display: 'flex', height: 6, borderRadius: 99, overflow: 'hidden' }}>
-              <div style={{ flex: termine,                                    background: STATUS_META.termine.dot }} />
-              <div style={{ flex: encours,                                    background: STATUS_META.encours.dot }} />
-              <div style={{ flex: enRetard,                                   background: STATUS_META.en_retard.dot }} />
-              <div style={{ flex: bloque,                                     background: STATUS_META.bloque.dot }} />
+              <div style={{ flex: termine,    background: STATUS_META.termine.dot }} />
+              <div style={{ flex: encours,    background: STATUS_META.encours.dot }} />
+              <div style={{ flex: enRetard,   background: STATUS_META.en_retard.dot }} />
+              <div style={{ flex: bloque,     background: STATUS_META.bloque.dot }} />
               <div style={{ flex: total - termine - encours - enRetard - bloque, background: 'var(--border)' }} />
-            </div>
-            <div style={{ display: 'flex', gap: 8, marginTop: 6, flexWrap: 'wrap' }}>
-              {[
-                { label: 'Terminé',   color: STATUS_META.termine.dot,   pct: Math.round(termine  / total * 100) },
-                { label: 'En cours',  color: STATUS_META.encours.dot,   pct: Math.round(encours  / total * 100) },
-                { label: 'En retard', color: STATUS_META.en_retard.dot, pct: Math.round(enRetard / total * 100) },
-                { label: 'Bloqué',   color: STATUS_META.bloque.dot,    pct: Math.round(bloque   / total * 100) },
-              ].map(({ label, color, pct }) => pct > 0 ? (
-                <span key={label} style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 10, color: 'var(--muted)' }}>
-                  <span style={{ width: 7, height: 7, borderRadius: '50%', background: color, display: 'inline-block' }} />
-                  {label} {pct}%
-                </span>
-              ) : null)}
             </div>
           </div>
         )}
+        {/* Expanded task list */}
+        {expandedStatus && (() => {
+          const list = expandedStatus === 'total'     ? interventions
+                     : expandedStatus === 'termine'   ? interventions.filter(iv => iv.status === 'termine')
+                     : expandedStatus === 'encours'   ? interventions.filter(iv => iv.status === 'encours')
+                     : expandedStatus === 'en_retard' ? interventions.filter(iv => effectiveStatus(iv) === 'en_retard')
+                     : interventions.filter(iv => iv.status === 'bloque')
+          if (list.length === 0) return null
+          return (
+            <div style={{ marginTop: 12, display: 'flex', flexDirection: 'column', gap: 4 }}>
+              <div style={{ fontSize: 10, color: 'var(--muted)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '.4px', marginBottom: 4 }}>
+                {list.length} tâche{list.length > 1 ? 's' : ''}
+              </div>
+              {list.slice(0, 20).map(iv => (
+                <TaskRow key={iv.id} iv={iv} zones={zones} trades={trades} onClick={() => setSelectedId(iv.id)} />
+              ))}
+              {list.length > 20 && (
+                <div style={{ fontSize: 11, color: 'var(--muted)', textAlign: 'center', padding: '4px 0' }}>+ {list.length - 20} autres</div>
+              )}
+            </div>
+          )
+        })()}
       </Card>
 
       {/* ── Par corps de métier ── */}
@@ -285,29 +304,47 @@ function DashboardScreen({ zones, interventions, trades, onUpdate }: {
               const pct      = Math.round(tDone / tTasks.length * 100)
               const tc       = getTradeColor(t.color)
               const hasAlert = tLate > 0 || tBlocked > 0
+              const open     = expandedTrade === t.id
+              const sorted   = [...tTasks].sort((a, b) => {
+                const rank = (iv: Intervention) => effectiveStatus(iv) === 'en_retard' ? 0 : iv.status === 'bloque' ? 1 : iv.status === 'encours' ? 2 : iv.status === 'termine' ? 4 : 3
+                return rank(a) - rank(b)
+              })
               return (
                 <div key={t.id} style={{ borderLeft: `3px solid ${tc.b}`, paddingLeft: 10 }}>
-                  {/* Trade name + % */}
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 4 }}>
-                    <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)' }}>{t.name}</span>
-                    <span style={{ fontSize: 18, fontWeight: 800, color: pct === 100 ? 'var(--success)' : hasAlert ? STATUS_META.en_retard.dot : 'var(--primary)', lineHeight: 1 }}>{pct}%</span>
-                  </div>
-                  {/* Human-readable summary */}
-                  <div style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 6, display: 'flex', flexWrap: 'wrap', gap: '2px 6px' }}>
-                    {tDone > 0    && <span style={{ color: STATUS_META.termine.dot,   fontWeight: 600 }}>✓ {tDone} terminée{tDone > 1 ? 's' : ''}</span>}
-                    {tEncours > 0 && <span style={{ color: STATUS_META.encours.dot,   fontWeight: 600 }}>● {tEncours} en cours</span>}
-                    {tLate > 0    && <span style={{ color: STATUS_META.en_retard.dot, fontWeight: 700 }}>⏱ {tLate} en retard</span>}
-                    {tBlocked > 0 && <span style={{ color: STATUS_META.bloque.dot,   fontWeight: 700 }}>⛔ {tBlocked} bloquée{tBlocked > 1 ? 's' : ''}</span>}
-                    {tARealis > 0 && <span style={{ color: 'var(--xmuted)' }}>◌ {tARealis} à venir</span>}
-                  </div>
-                  {/* Segmented bar */}
-                  <div style={{ display: 'flex', height: 5, borderRadius: 99, overflow: 'hidden', background: 'var(--border)' }}>
-                    <div style={{ flex: tDone,    background: STATUS_META.termine.dot }} />
-                    <div style={{ flex: tEncours, background: STATUS_META.encours.dot }} />
-                    <div style={{ flex: tLate,    background: STATUS_META.en_retard.dot }} />
-                    <div style={{ flex: tBlocked, background: STATUS_META.bloque.dot }} />
-                    <div style={{ flex: tARealis, background: 'transparent' }} />
-                  </div>
+                  {/* Clickable header */}
+                  <button onClick={() => setExpandedTrade(open ? null : t.id)} style={{
+                    width: '100%', background: 'none', border: 'none', padding: 0, cursor: 'pointer', textAlign: 'left',
+                  }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+                      <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)' }}>{t.name}</span>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <span style={{ fontSize: 18, fontWeight: 800, color: pct === 100 ? 'var(--success)' : hasAlert ? STATUS_META.en_retard.dot : 'var(--primary)', lineHeight: 1 }}>{pct}%</span>
+                        <span style={{ fontSize: 12, color: 'var(--muted)', transition: 'transform .2s', display: 'inline-block', transform: open ? 'rotate(180deg)' : 'rotate(0deg)' }}>▾</span>
+                      </div>
+                    </div>
+                    <div style={{ fontSize: 11, marginBottom: 6, display: 'flex', flexWrap: 'wrap', gap: '2px 6px' }}>
+                      {tDone > 0    && <span style={{ color: STATUS_META.termine.dot,   fontWeight: 600 }}>✓ {tDone} terminée{tDone > 1 ? 's' : ''}</span>}
+                      {tEncours > 0 && <span style={{ color: STATUS_META.encours.dot,   fontWeight: 600 }}>● {tEncours} en cours</span>}
+                      {tLate > 0    && <span style={{ color: STATUS_META.en_retard.dot, fontWeight: 700 }}>⏱ {tLate} en retard</span>}
+                      {tBlocked > 0 && <span style={{ color: STATUS_META.bloque.dot,   fontWeight: 700 }}>⛔ {tBlocked} bloquée{tBlocked > 1 ? 's' : ''}</span>}
+                      {tARealis > 0 && <span style={{ color: 'var(--xmuted)' }}>◌ {tARealis} à venir</span>}
+                    </div>
+                    <div style={{ display: 'flex', height: 5, borderRadius: 99, overflow: 'hidden', background: 'var(--border)' }}>
+                      <div style={{ flex: tDone,    background: STATUS_META.termine.dot }} />
+                      <div style={{ flex: tEncours, background: STATUS_META.encours.dot }} />
+                      <div style={{ flex: tLate,    background: STATUS_META.en_retard.dot }} />
+                      <div style={{ flex: tBlocked, background: STATUS_META.bloque.dot }} />
+                      <div style={{ flex: tARealis, background: 'transparent' }} />
+                    </div>
+                  </button>
+                  {/* Expanded task list */}
+                  {open && (
+                    <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 4 }}>
+                      {sorted.map(iv => (
+                        <TaskRow key={iv.id} iv={iv} zones={zones} trades={trades} onClick={() => setSelectedId(iv.id)} />
+                      ))}
+                    </div>
+                  )}
                 </div>
               )
             })}
@@ -413,6 +450,36 @@ function Metric({ label, value, color }: { label: string; value: string; color: 
       <div style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 2 }}>{label}</div>
       <div style={{ fontSize: 20, fontWeight: 700, color }}>{value}</div>
     </div>
+  )
+}
+
+function TaskRow({ iv, zones, trades, onClick }: { iv: Intervention; zones: Zone[]; trades: Trade[]; onClick: () => void }) {
+  const es    = effectiveStatus(iv)
+  const sm    = STATUS_META[es]
+  const zone  = zones.find(z => z.id === iv.zone)
+  const trade = trades.find(t => t.id === iv.trade)
+  const tc    = getTradeColor(trade?.color ?? 'blue')
+  return (
+    <button onClick={onClick} style={{
+      width: '100%', textAlign: 'left', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8,
+      padding: '7px 10px', background: 'var(--surface-2)',
+      border: `1px solid var(--border)`, borderLeft: `3px solid ${sm.dot}`,
+      borderRadius: 'var(--r-xs)',
+    }}>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          {iv.task}
+        </div>
+        <div style={{ fontSize: 10, color: 'var(--muted)', marginTop: 1, display: 'flex', gap: 6 }}>
+          {iv.task_number && <span style={{ color: tc.b, fontFamily: "'DM Mono', monospace" }}>{iv.task_number}</span>}
+          {zone && <span>{zone.short}</span>}
+          {iv.company && <span>· {iv.company}</span>}
+        </div>
+      </div>
+      <span style={{ fontSize: 10, fontWeight: 700, color: sm.dot, background: sm.bg, padding: '2px 7px', borderRadius: 99, whiteSpace: 'nowrap', flexShrink: 0 }}>
+        {sm.label}
+      </span>
+    </button>
   )
 }
 
