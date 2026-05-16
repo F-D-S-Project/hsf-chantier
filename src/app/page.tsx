@@ -176,26 +176,55 @@ function DashboardScreen({ zones, interventions, trades, onUpdate }: {
 
       {/* ── Santé du projet ── */}
       <Card title="Santé du projet">
-        <div style={{ marginBottom: 14 }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
-            <span style={{ fontSize: 11, color: 'var(--muted)' }}>Avancement global</span>
-            <span style={{ fontSize: 13, fontWeight: 700, color: avancementReel > 60 ? 'var(--success)' : 'var(--primary)' }}>{avancementReel}%</span>
-          </div>
-          <div style={{ height: 10, background: 'var(--border)', borderRadius: 99, overflow: 'hidden', position: 'relative' }}>
-            <div style={{ height: '100%', width: `${avancementReel}%`, background: 'linear-gradient(90deg, var(--primary), #4B7CF3)', borderRadius: 99, transition: 'width .6s' }} />
-            {cadenceCible > 0 && (
-              <div style={{ position: 'absolute', top: 0, bottom: 0, left: `${Math.min(cadenceCible, 99)}%`, width: 2, background: '#64748B', opacity: 0.5 }} />
-            )}
-          </div>
-          <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 3 }}>
-            <span style={{ fontSize: 9, color: 'var(--xmuted)' }}>Objectif théorique : {cadenceCible}%</span>
-          </div>
+        {/* Hero: tâches terminées */}
+        <div style={{ display: 'flex', alignItems: 'flex-end', gap: 8, marginBottom: 10 }}>
+          <span style={{ fontSize: 44, fontWeight: 800, color: 'var(--primary)', lineHeight: 1 }}>{termine}</span>
+          <span style={{ fontSize: 18, color: 'var(--muted)', fontWeight: 500, paddingBottom: 4 }}>/ {total} tâches terminées</span>
         </div>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-          <MetricCard label="Avancement réel" value={`${avancementReel}%`} sub="Progression moyenne de toutes les tâches" color={avancementReel > 60 ? 'var(--success)' : 'var(--primary)'} />
-          <MetricCard label="Cadence cible"   value={`${cadenceCible}%`}   sub="Où vous devriez être selon le planning"  color="var(--muted)" />
-          <MetricCard label="Dérive"          value={`${derive > 0 ? '+' : ''}${derive}%`} sub={derive >= 0 ? 'En avance sur le planning' : 'En retard sur le planning'} color={derive >= 0 ? 'var(--success)' : 'var(--danger)'} />
-          <MetricCard label="Fiabilité"       value={`${fiabilite}%`}      sub={`${tasksDone} terminées sur ${tasksDue} dues`} color={fiabilite > 70 ? 'var(--success)' : 'var(--danger)'} />
+
+        {/* Progress bar */}
+        <div style={{ height: 8, background: 'var(--border)', borderRadius: 99, overflow: 'hidden', marginBottom: 10 }}>
+          <div style={{ height: '100%', width: `${Math.round(termine / Math.max(total, 1) * 100)}%`, background: 'linear-gradient(90deg, var(--primary), #4B7CF3)', borderRadius: 99, transition: 'width .6s' }} />
+        </div>
+
+        {/* Alert pills */}
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 14 }}>
+          <span style={{
+            display: 'flex', alignItems: 'center', gap: 5, padding: '5px 12px', borderRadius: 20,
+            background: enRetard > 0 ? 'rgba(234,88,12,.12)' : 'var(--surface-2)',
+            border: `1px solid ${enRetard > 0 ? 'rgba(234,88,12,.35)' : 'var(--border)'}`,
+            fontSize: 12, fontWeight: 700, color: enRetard > 0 ? STATUS_META.en_retard.dot : 'var(--muted)',
+          }}>
+            ⏱ {enRetard} en retard
+          </span>
+          <span style={{
+            display: 'flex', alignItems: 'center', gap: 5, padding: '5px 12px', borderRadius: 20,
+            background: bloque > 0 ? 'var(--danger-l)' : 'var(--surface-2)',
+            border: `1px solid ${bloque > 0 ? 'rgba(220,38,38,.35)' : 'var(--border)'}`,
+            fontSize: 12, fontWeight: 700, color: bloque > 0 ? 'var(--danger)' : 'var(--muted)',
+          }}>
+            ⛔ {bloque} bloquée{bloque > 1 ? 's' : ''}
+          </span>
+          <span style={{
+            display: 'flex', alignItems: 'center', gap: 5, padding: '5px 12px', borderRadius: 20,
+            background: 'var(--surface-2)', border: '1px solid var(--border)',
+            fontSize: 12, fontWeight: 600, color: 'var(--muted)',
+          }}>
+            ● {encours} en cours
+          </span>
+        </div>
+
+        {/* Fiabilité */}
+        <div style={{ background: 'var(--surface-2)', borderRadius: 'var(--r-sm)', padding: '10px 14px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <div>
+            <div style={{ fontSize: 11, color: 'var(--muted)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '.4px', marginBottom: 2 }}>Fiabilité du planning</div>
+            <div style={{ fontSize: 12, color: 'var(--text)' }}>
+              {tasksDone} tâches terminées sur <strong>{tasksDue}</strong> qui étaient dues à ce jour
+            </div>
+          </div>
+          <div style={{ fontSize: 24, fontWeight: 800, color: fiabilite > 70 ? 'var(--success)' : 'var(--danger)', flexShrink: 0, marginLeft: 12 }}>
+            {fiabilite}%
+          </div>
         </div>
       </Card>
 
