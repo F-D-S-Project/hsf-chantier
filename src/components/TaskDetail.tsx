@@ -15,9 +15,11 @@ interface Props {
   allInterventions: Intervention[]
   onClose: () => void
   onUpdate: (patch: Partial<Intervention>) => void
+  onStartMove?: () => void
+  onStartDuplicate?: () => void
 }
 
-export default function TaskDetail({ iv, zones, trades, allInterventions, onClose, onUpdate }: Props) {
+export default function TaskDetail({ iv, zones, trades, allInterventions, onClose, onUpdate, onStartMove, onStartDuplicate }: Props) {
   const [saving, setSaving]     = useState(false)
   const [status, setStatus]     = useState<Status>(iv.status as Status)
   const [notes, setNotes]       = useState(iv.notes ?? '')
@@ -208,23 +210,47 @@ export default function TaskDetail({ iv, zones, trades, allInterventions, onClos
         </div>
 
         {/* Footer */}
-        <div style={{ padding: '12px 16px', borderTop: '1px solid var(--border)', display: 'flex', gap: 8, flexShrink: 0 }}>
-          <button onClick={onClose} style={{ flex: 1, padding: '11px 0', borderRadius: 'var(--r-sm)', border: '1px solid var(--border)', background: 'var(--surface-2)', color: 'var(--muted)', fontSize: 14, fontWeight: 600, cursor: 'pointer' }}>
-            Annuler
-          </button>
-          <button
-            onClick={handleSave}
-            disabled={!hasChanges || saving}
-            style={{
-              flex: 2, padding: '11px 0', borderRadius: 'var(--r-sm)', border: 'none',
-              background: hasChanges ? 'var(--primary)' : 'var(--border)',
-              color: hasChanges ? '#fff' : 'var(--muted)',
-              fontSize: 14, fontWeight: 700, cursor: hasChanges ? 'pointer' : 'default',
-              transition: 'background .15s',
-            }}
-          >
-            {saving ? 'Enregistrement…' : 'Enregistrer'}
-          </button>
+        <div style={{ padding: '12px 16px', borderTop: '1px solid var(--border)', display: 'flex', flexDirection: 'column', gap: 8, flexShrink: 0 }}>
+          {/* Move / Duplicate row */}
+          {(onStartMove || onStartDuplicate) && (
+            <div style={{ display: 'flex', gap: 8 }}>
+              {onStartMove && (
+                <button
+                  onClick={onStartMove}
+                  style={{ flex: 1, padding: '9px 0', borderRadius: 'var(--r-sm)', border: '1px solid #3B82F6', background: '#EFF6FF', color: '#1D4ED8', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}
+                >
+                  ↕ Déplacer
+                </button>
+              )}
+              {onStartDuplicate && (
+                <button
+                  onClick={onStartDuplicate}
+                  style={{ flex: 1, padding: '9px 0', borderRadius: 'var(--r-sm)', border: '1px solid #22C55E', background: '#F0FDF4', color: '#15803D', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}
+                >
+                  ⊕ Dupliquer
+                </button>
+              )}
+            </div>
+          )}
+          {/* Annuler / Enregistrer row */}
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button onClick={onClose} style={{ flex: 1, padding: '11px 0', borderRadius: 'var(--r-sm)', border: '1px solid var(--border)', background: 'var(--surface-2)', color: 'var(--muted)', fontSize: 14, fontWeight: 600, cursor: 'pointer' }}>
+              Annuler
+            </button>
+            <button
+              onClick={handleSave}
+              disabled={!hasChanges || saving}
+              style={{
+                flex: 2, padding: '11px 0', borderRadius: 'var(--r-sm)', border: 'none',
+                background: hasChanges ? 'var(--primary)' : 'var(--border)',
+                color: hasChanges ? '#fff' : 'var(--muted)',
+                fontSize: 14, fontWeight: 700, cursor: hasChanges ? 'pointer' : 'default',
+                transition: 'background .15s',
+              }}
+            >
+              {saving ? 'Enregistrement…' : 'Enregistrer'}
+            </button>
+          </div>
         </div>
       </div>
     </>

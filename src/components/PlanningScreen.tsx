@@ -5,7 +5,8 @@ import type { Intervention, Zone, Trade } from '@/types/database'
 import { effectiveStatus } from '@/lib/progress'
 import { STATUS_META } from '@/constants/status'
 import { getTradeColor, getZoneFloorColor } from '@/constants/colors'
-import { fmtDate, isTaskActiveOn, todayStr } from '@/lib/dates'
+import { isTaskActiveOn, todayStr } from '@/lib/dates'
+import { supabase } from '@/lib/supabase'
 import TaskDetail from './TaskDetail'
 
 type ViewMode = '1s' | '2s' | '3s'
@@ -15,9 +16,10 @@ interface Props {
   zones: Zone[]
   trades: Trade[]
   onUpdate: (id: string, patch: Partial<Intervention>) => void
+  onAdd: (iv: Intervention) => void
 }
 
-// ─── Date helpers (local to planning) ────────────────────────────────────────
+// ─── Date helpers ─────────────────────────────────────────────────────────────
 
 function getMonday(offset = 0): Date {
   const today = new Date(); today.setHours(0, 0, 0, 0)
@@ -31,13 +33,25 @@ function localDateStr(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 }
 
+function daysBetween(startStr: string, endStr: string): number {
+  const s = new Date(startStr + 'T00:00:00')
+  const e = new Date(endStr   + 'T00:00:00')
+  return Math.max(0, Math.round((e.getTime() - s.getTime()) / 86400000))
+}
+
+function addDaysLocal(dateStr: string, days: number): string {
+  const d = new Date(dateStr + 'T12:00:00')
+  d.setDate(d.getDate() + days)
+  return localDateStr(d)
+}
+
 function multiWeekDays(weekOffset: number, weeks: number): string[] {
   const monday = getMonday(weekOffset)
   const out: string[] = []
   for (let w = 0; w < weeks; w++) {
-    for (let d = 0; d < 7; d++) {
+    for (let d2 = 0; d2 < 7; d2++) {
       const day = new Date(monday)
-      day.setDate(monday.getDate() + w * 7 + d)
+      day.setDate(monday.getDate() + w * 7 + d2)
       out.push(localDateStr(day))
     }
   }
@@ -52,14 +66,292 @@ function dayLabel(dateStr: string): { weekday: string; date: string } {
   }
 }
 
+// ─── French public holiday helpers ───────────────────────────────────────────
+
+/** Gregorian algorithm — returns Easter Sunday for a given year */
+function easterSunday(year: number): Date {
+  const a = year % 19
+  const b = Math.floor(year / 100)
+  const c = year % 100
+  const d = Math.floor(b / 4)
+  const e = b % 4
+  const f = Math.floor((b + 8) / 25)
+  const g = Math.floor((b - f + 1) / 3)
+  const h = (19 * a + b - d - g + 15) % 30
+  const i = Math.floor(c / 4)
+  const k = c % 4
+  const l = (32 + 2 * e + 2 * i - h - k) % 7
+  const m = Math.floor((a + 11 * h + 22 * l) / 451)
+  const month = Math.floor((h + l - 7 * m + 114) / 31)
+  const day   = ((h + l - 7 * m + 114) % 31) + 1
+  return new Date(year, month - 1, day)
+}
+
+function getFrenchHolidays(year: number): Set<string> {
+  const fmt = (d: Date) => localDateStr(d)
+
+  const easter = easterSunday(year)
+
+  function easterPlus(days: number): Date {
+    const d = new Date(easter)
+    d.setDate(d.getDate() + days)
+    return d
+  }
+
+  const fixed = [
+    `${year}-01-01`, // Jour de l'An
+    `${year}-05-01`, // Fête du Travail
+    `${year}-05-08`, // Victoire 1945
+    `${year}-07-14`, // Fête Nationale
+    `${year}-08-15`, // Assomption
+    `${year}-11-01`, // Toussaint
+    `${year}-11-11`, // Armistice
+    `${year}-12-25`, // Noël
+  ]
+
+  const movable = [
+    fmt(easterPlus(1)),  // Lundi de Pâques
+    fmt(easterPlus(39)), // Ascension
+    fmt(easterPlus(50)), // Lundi de Pentecôte
+  ]
+
+  return new Set([...fixed, ...movable])
+}
+
+// Cache per year
+const holidayCache: Record<number, Set<string>> = {}
+
+function isHoliday(dateStr: string): boolean {
+  const year = parseInt(dateStr.slice(0, 4), 10)
+  if (!holidayCache[year]) holidayCache[year] = getFrenchHolidays(year)
+  return holidayCache[year].has(dateStr)
+}
+
+// ─── AddTaskModal ─────────────────────────────────────────────────────────────
+
+interface AddTaskModalProps {
+  zones: Zone[]
+  trades: Trade[]
+  defaultZone?: string
+  defaultDate?: string
+  onClose: () => void
+  onAdd: (iv: Intervention) => void
+}
+
+function AddTaskModal({ zones, trades, defaultZone, defaultDate, onClose, onAdd }: AddTaskModalProps) {
+  const today = todayStr()
+  const [zoneId,    setZoneId]    = useState(defaultZone ?? zones[0]?.id ?? '')
+  const [tradeId,   setTradeId]   = useState(trades[0]?.id ?? '')
+  const [company,   setCompany]   = useState('')
+  const [task,      setTask]      = useState('')
+  const [startDate, setStartDate] = useState(defaultDate ?? today)
+  const [endDate,   setEndDate]   = useState(defaultDate ?? today)
+  const [priority,  setPriority]  = useState<1 | 2 | 3>(3)
+  const [saving,    setSaving]    = useState(false)
+  const [error,     setError]     = useState<string | null>(null)
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault()
+    if (!task.trim()) { setError('La description est requise.'); return }
+    setSaving(true)
+    setError(null)
+    const newIv = {
+      trade:      tradeId,
+      company,
+      task:       task.trim(),
+      task_number: '',
+      zone:       zoneId,
+      start_date: startDate,
+      end_date:   endDate >= startDate ? endDate : startDate,
+      status:     'arealis' as const,
+      priority,
+      prereq:     '',
+      notes:      '',
+      predecessor_id:   null,
+      predecessor_ids:  [],
+      successor_ids:    [],
+      off_days:         [],
+      attachments:      [],
+      progress:         0,
+      prereq_company:   null,
+      company_edit_allowed: false,
+    }
+    const { data, error: err } = await supabase.from('interventions').insert([newIv]).select().single()
+    setSaving(false)
+    if (err || !data) { setError(err?.message ?? 'Erreur inconnue'); return }
+    onAdd(data as Intervention)
+    onClose()
+  }
+
+  const prioCfg: { value: 1 | 2 | 3; label: string; color: string; bg: string }[] = [
+    { value: 3, label: 'Normale',  color: '#6B7280', bg: 'var(--surface-2)' },
+    { value: 2, label: 'Haute',    color: '#EA580C', bg: '#FFF7ED' },
+    { value: 1, label: 'Critique', color: '#DC2626', bg: '#FEF2F2' },
+  ]
+
+  return (
+    <>
+      <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.4)', zIndex: 100, backdropFilter: 'blur(2px)' }} />
+      <div style={{
+        position: 'fixed', bottom: 0, left: 0, right: 0, zIndex: 101,
+        background: 'var(--surface)', borderRadius: '16px 16px 0 0',
+        boxShadow: '0 -8px 32px rgba(0,0,0,.18)',
+        maxHeight: '92vh', display: 'flex', flexDirection: 'column',
+        animation: 'slideUp .22s ease-out',
+      }}>
+        {/* Handle */}
+        <div style={{ padding: '12px 0 0', display: 'flex', justifyContent: 'center' }}>
+          <div style={{ width: 36, height: 4, borderRadius: 2, background: 'var(--border)' }} />
+        </div>
+
+        {/* Header */}
+        <div style={{ padding: '10px 16px 10px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <span style={{ fontSize: 16, fontWeight: 700, color: 'var(--text)' }}>Nouvelle tâche</span>
+          <button onClick={onClose} style={{ border: 'none', background: 'var(--surface-2)', borderRadius: 8, width: 32, height: 32, cursor: 'pointer', fontSize: 18, color: 'var(--muted)' }}>×</button>
+        </div>
+
+        {/* Form */}
+        <form onSubmit={handleSubmit} style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column' }}>
+          <div style={{ padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: 14 }}>
+
+            {/* Zone */}
+            <div>
+              <label style={modalLabelStyle}>Zone</label>
+              <select value={zoneId} onChange={e => setZoneId(e.target.value)} style={modalSelectStyle}>
+                {zones.map(z => <option key={z.id} value={z.id}>{z.name} ({z.short})</option>)}
+              </select>
+            </div>
+
+            {/* Corps de métier */}
+            <div>
+              <label style={modalLabelStyle}>Corps de métier</label>
+              <select value={tradeId} onChange={e => setTradeId(e.target.value)} style={modalSelectStyle}>
+                {trades.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+              </select>
+            </div>
+
+            {/* Entreprise */}
+            <div>
+              <label style={modalLabelStyle}>Entreprise</label>
+              <input
+                type="text"
+                value={company}
+                onChange={e => setCompany(e.target.value)}
+                placeholder="Nom de l'entreprise"
+                style={modalInputStyle}
+              />
+            </div>
+
+            {/* Description */}
+            <div>
+              <label style={modalLabelStyle}>Description <span style={{ color: 'var(--danger)' }}>*</span></label>
+              <textarea
+                value={task}
+                onChange={e => setTask(e.target.value)}
+                rows={3}
+                placeholder="Description de la tâche…"
+                style={{ ...modalInputStyle, resize: 'vertical', fontFamily: 'inherit' }}
+              />
+            </div>
+
+            {/* Dates */}
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+              <div>
+                <label style={modalLabelStyle}>Date début</label>
+                <input
+                  type="date"
+                  value={startDate}
+                  onChange={e => { setStartDate(e.target.value); if (endDate < e.target.value) setEndDate(e.target.value) }}
+                  style={modalInputStyle}
+                />
+              </div>
+              <div>
+                <label style={modalLabelStyle}>Date fin</label>
+                <input
+                  type="date"
+                  value={endDate}
+                  min={startDate}
+                  onChange={e => setEndDate(e.target.value)}
+                  style={modalInputStyle}
+                />
+              </div>
+            </div>
+
+            {/* Priorité */}
+            <div>
+              <label style={modalLabelStyle}>Priorité</label>
+              <div style={{ display: 'flex', gap: 8, marginTop: 6 }}>
+                {prioCfg.map(p => (
+                  <button
+                    key={p.value}
+                    type="button"
+                    onClick={() => setPriority(p.value)}
+                    style={{
+                      flex: 1, padding: '7px 0', borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: 'pointer',
+                      border: `1px solid ${priority === p.value ? p.color : 'var(--border)'}`,
+                      background: priority === p.value ? p.bg : 'var(--surface-2)',
+                      color: priority === p.value ? p.color : 'var(--muted)',
+                    }}
+                  >
+                    {p.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {error && (
+              <div style={{ background: '#FEF2F2', border: '1px solid rgba(220,38,38,.3)', borderRadius: 6, padding: '8px 12px', fontSize: 12, color: '#DC2626' }}>
+                {error}
+              </div>
+            )}
+          </div>
+
+          {/* Footer */}
+          <div style={{ padding: '12px 16px', borderTop: '1px solid var(--border)', display: 'flex', gap: 8, flexShrink: 0 }}>
+            <button type="button" onClick={onClose} style={{ flex: 1, padding: '11px 0', borderRadius: 'var(--r-sm)', border: '1px solid var(--border)', background: 'var(--surface-2)', color: 'var(--muted)', fontSize: 14, fontWeight: 600, cursor: 'pointer' }}>
+              Annuler
+            </button>
+            <button type="submit" disabled={saving} style={{
+              flex: 2, padding: '11px 0', borderRadius: 'var(--r-sm)', border: 'none',
+              background: saving ? 'var(--border)' : 'var(--primary)',
+              color: saving ? 'var(--muted)' : '#fff',
+              fontSize: 14, fontWeight: 700, cursor: saving ? 'default' : 'pointer',
+            }}>
+              {saving ? 'Création…' : 'Créer la tâche'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </>
+  )
+}
+
+const modalLabelStyle: React.CSSProperties = {
+  display: 'block', fontSize: 11, color: 'var(--muted)', fontWeight: 600,
+  textTransform: 'uppercase', letterSpacing: '.4px', marginBottom: 5,
+}
+const modalInputStyle: React.CSSProperties = {
+  width: '100%', padding: '8px 10px', borderRadius: 'var(--r-xs)',
+  border: '1px solid var(--border)', background: 'var(--surface-2)',
+  color: 'var(--text)', fontSize: 13, boxSizing: 'border-box',
+}
+const modalSelectStyle: React.CSSProperties = {
+  ...modalInputStyle,
+}
+
 // ─── Main component ───────────────────────────────────────────────────────────
 
-export default function PlanningScreen({ interventions, zones, trades, onUpdate }: Props) {
+type MoveMode = { iv: Intervention; mode: 'move' | 'dup' } | null
+
+export default function PlanningScreen({ interventions, zones, trades, onUpdate, onAdd }: Props) {
   const [weekOffset, setWeekOffset] = useState(0)
   const [viewMode, setViewMode]     = useState<ViewMode>('1s')
   const [zoneFilter, setZoneFilter] = useState<string[]>([])
   const [dropOpen, setDropOpen]     = useState(false)
   const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [showAdd, setShowAdd]       = useState(false)
+  const [addDefaults, setAddDefaults] = useState<{ zone?: string; date?: string }>({})
+  const [moveMode, setMoveMode]     = useState<MoveMode>(null)
   const dropRef = useRef<HTMLTableCellElement>(null)
   const today   = todayStr()
 
@@ -69,7 +361,6 @@ export default function PlanningScreen({ interventions, zones, trades, onUpdate 
   const visZones   = zoneFilter.length === 0 ? zones : zones.filter(z => zoneFilter.includes(z.id))
   const activeCount = zoneFilter.length
 
-  // zone column and deadline column widths
   const zoneW = isMulti ? 40 : 58
   const deadW = isMulti ? 28 : 50
 
@@ -83,8 +374,35 @@ export default function PlanningScreen({ interventions, zones, trades, onUpdate 
 
   const selectedIv = selectedId ? interventions.find(iv => iv.id === selectedId) ?? null : null
 
+  async function handleCellClick(zoneId: string, dateStr: string) {
+    if (moveMode) {
+      const { iv, mode } = moveMode
+      const duration = daysBetween(iv.start_date ?? dateStr, iv.end_date ?? iv.start_date ?? dateStr)
+      const newStart = dateStr
+      const newEnd   = addDaysLocal(dateStr, duration)
+
+      if (mode === 'move') {
+        const patch: Partial<Intervention> = { start_date: newStart, end_date: newEnd }
+        const { error } = await supabase.from('interventions').update(patch).eq('id', iv.id)
+        if (!error) onUpdate(iv.id, patch)
+      } else {
+        // dup
+        const { id: _id, created_at: _ca, updated_at: _ua, ...rest } = iv
+        void _id; void _ca; void _ua
+        const newRow = { ...rest, start_date: newStart, end_date: newEnd }
+        const { data, error } = await supabase.from('interventions').insert([newRow]).select().single()
+        if (!error && data) onAdd(data as Intervention)
+      }
+      setMoveMode(null)
+      return
+    }
+    // no move mode — open add modal pre-filled
+    setAddDefaults({ zone: zoneId, date: dateStr })
+    setShowAdd(true)
+  }
+
   return (
-    <div style={{ height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden', position: 'relative' }}>
+    <div style={{ height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden', position: 'relative' }} onClick={() => { if (dropOpen) setDropOpen(false) }}>
 
       {/* Toolbar */}
       <div style={{ padding: '8px 12px', background: 'var(--surface)', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
@@ -110,7 +428,42 @@ export default function PlanningScreen({ interventions, zones, trades, onUpdate 
             </button>
           ))}
         </div>
+
+        {/* Spacer */}
+        <div style={{ flex: 1 }} />
+
+        {/* Add button */}
+        <button
+          onClick={e => { e.stopPropagation(); setAddDefaults({}); setShowAdd(true) }}
+          style={{
+            width: 32, height: 32, borderRadius: 8, border: 'none',
+            background: 'var(--primary)', color: '#fff', fontSize: 20, lineHeight: 1,
+            cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 300,
+          }}
+          title="Ajouter une tâche"
+        >
+          +
+        </button>
       </div>
+
+      {/* Move mode banner */}
+      {moveMode && (
+        <div style={{
+          background: moveMode.mode === 'move' ? '#EFF6FF' : '#F0FDF4',
+          borderBottom: `2px solid ${moveMode.mode === 'move' ? '#3B82F6' : '#22C55E'}`,
+          padding: '8px 14px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0,
+        }}>
+          <span style={{ fontSize: 12, fontWeight: 600, color: moveMode.mode === 'move' ? '#1D4ED8' : '#15803D' }}>
+            {moveMode.mode === 'move' ? '↕ Tapez une cellule pour déplacer' : '⊕ Tapez une cellule pour dupliquer'} · <em>{moveMode.iv.task?.slice(0, 30)}</em>
+          </span>
+          <button
+            onClick={() => setMoveMode(null)}
+            style={{ fontSize: 11, fontWeight: 700, color: 'var(--muted)', background: 'none', border: '1px solid var(--border)', borderRadius: 6, padding: '3px 8px', cursor: 'pointer' }}
+          >
+            Annuler
+          </button>
+        </div>
+      )}
 
       {/* Gantt table (scrollable) */}
       <div style={{ flex: 1, overflowY: 'auto', overflowX: 'auto', position: 'relative' }}>
@@ -131,7 +484,7 @@ export default function PlanningScreen({ interventions, zones, trades, onUpdate 
                 position: 'sticky', top: 0, zIndex: 12, background: 'var(--surface-2)',
                 verticalAlign: 'middle', textAlign: 'center',
               }}>
-                <button onClick={() => setDropOpen(o => !o)} style={{
+                <button onClick={e => { e.stopPropagation(); setDropOpen(o => !o) }} style={{
                   width: '100%', padding: '3px 2px', borderRadius: 4,
                   border: `1px solid ${dropOpen || activeCount ? 'var(--primary)' : 'var(--border)'}`,
                   background: activeCount ? 'var(--primary-l)' : 'transparent',
@@ -144,7 +497,7 @@ export default function PlanningScreen({ interventions, zones, trades, onUpdate 
                 </button>
 
                 {dropOpen && (
-                  <div style={{
+                  <div onClick={e => e.stopPropagation()} style={{
                     position: 'absolute', top: 'calc(100% + 4px)', left: 0, minWidth: 220,
                     background: 'var(--surface)', border: '1px solid var(--border)',
                     borderRadius: 'var(--r-sm)', boxShadow: 'var(--shadow-md)',
@@ -158,7 +511,7 @@ export default function PlanningScreen({ interventions, zones, trades, onUpdate 
                       const checked = zoneFilter.length === 0 || zoneFilter.includes(z.id)
                       const fc = getZoneFloorColor(zones, z.floor)
                       return (
-                        <div key={z.id} onClick={e => { e.stopPropagation(); toggleZone(z.id) }} style={{
+                        <div key={z.id} onClick={() => toggleZone(z.id)} style={{
                           display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px',
                           cursor: 'pointer', borderBottom: '1px solid var(--border)',
                           background: checked ? 'var(--primary-l)' : 'transparent',
@@ -189,19 +542,34 @@ export default function PlanningScreen({ interventions, zones, trades, onUpdate 
                 const isCurrentDay  = d === today
                 const lbl = dayLabel(d)
                 const isWeekend = lbl.weekday === 'Sam' || lbl.weekday === 'Dim'
+                const isHol     = isHoliday(d)
+
+                let headerBg: string
+                if (isCurrentDay) {
+                  headerBg = 'var(--primary-l)'
+                } else if (isHol) {
+                  headerBg = '#FEF3C7'
+                } else if (isWeekend) {
+                  headerBg = 'var(--border)'
+                } else {
+                  headerBg = 'var(--surface-2)'
+                }
+
+                const headerColor = isCurrentDay ? 'var(--primary)' : isHol ? '#92400E' : 'var(--muted)'
+
                 return (
                   <th key={d} style={{
                     padding: isMulti ? '3px 0' : '6px 2px',
                     textAlign: 'center', overflow: 'hidden',
                     position: 'sticky', top: 0, zIndex: 11,
                     borderLeft: `${isFirstOfWeek ? 2 : 1}px solid var(--border)`,
-                    background: isCurrentDay ? 'var(--primary-l)' : isWeekend ? 'var(--border)' : 'var(--surface-2)',
+                    background: headerBg,
                     fontWeight: 'normal', verticalAlign: 'middle',
                   }}>
-                    <div style={{ fontSize: isMulti ? (weeks > 2 ? 6 : 7) : 9, fontWeight: 800, color: isCurrentDay ? 'var(--primary)' : 'var(--muted)', lineHeight: 1.05, whiteSpace: 'nowrap' }}>
+                    <div style={{ fontSize: isMulti ? (weeks > 2 ? 6 : 7) : 9, fontWeight: 800, color: headerColor, lineHeight: 1.05, whiteSpace: 'nowrap' }}>
                       {lbl.weekday}
                     </div>
-                    <div style={{ fontSize: isMulti ? (weeks > 2 ? 6.5 : 7.5) : 10, fontFamily: "'DM Mono', monospace", color: isCurrentDay ? 'var(--primary)' : 'var(--muted)', lineHeight: 1.05, whiteSpace: 'nowrap' }}>
+                    <div style={{ fontSize: isMulti ? (weeks > 2 ? 6.5 : 7.5) : 10, fontFamily: "'DM Mono', monospace", color: headerColor, lineHeight: 1.05, whiteSpace: 'nowrap' }}>
                       {lbl.date}
                     </div>
                   </th>
@@ -226,7 +594,6 @@ export default function PlanningScreen({ interventions, zones, trades, onUpdate 
               const prevZone  = visZones[zi - 1]
               const floorChange = zi > 0 && prevZone?.floor !== zone.floor
               const fc = getZoneFloorColor(zones, zone.floor)
-              const dc = zone.deadline ? deadlineColor(zone.deadline) : 'var(--muted)'
 
               return (
                 <tr key={zone.id} style={{
@@ -254,7 +621,21 @@ export default function PlanningScreen({ interventions, zones, trades, onUpdate 
                     const isDeadline    = zone.deadline === d
                     const lbl2 = dayLabel(d)
                     const isWeekend2 = lbl2.weekday === 'Sam' || lbl2.weekday === 'Dim'
-                    const cellBg = isDeadline ? 'rgba(220,38,38,.18)' : isCurrentDay ? 'color-mix(in srgb, var(--primary) 5%, transparent)' : isWeekend2 ? 'var(--border)' : 'transparent'
+                    const isHol2     = isHoliday(d)
+
+                    let cellBg: string
+                    if (isDeadline) {
+                      cellBg = 'rgba(220,38,38,.18)'
+                    } else if (isCurrentDay) {
+                      cellBg = 'color-mix(in srgb, var(--primary) 5%, transparent)'
+                    } else if (isHol2) {
+                      cellBg = 'rgba(251,191,36,.15)'
+                    } else if (isWeekend2) {
+                      cellBg = 'var(--border)'
+                    } else {
+                      cellBg = 'transparent'
+                    }
+
                     const cards  = interventions
                       .filter(iv => iv.zone === zone.id && isTaskActiveOn(iv, d) && !(iv.off_days?.includes(d)))
                       .sort((a, b) => {
@@ -264,16 +645,31 @@ export default function PlanningScreen({ interventions, zones, trades, onUpdate 
                       })
 
                     return (
-                      <td key={d} style={{
-                        position: 'relative', overflow: 'hidden',
-                        padding: isMulti ? 2 : 3,
-                        height: isMulti ? 44 : 64,
-                        verticalAlign: 'top',
-                        borderLeft: `${isFirstOfWeek ? 2 : 1}px solid var(--border)`,
-                        background: cellBg,
-                      }}>
+                      <td
+                        key={d}
+                        onClick={() => handleCellClick(zone.id, d)}
+                        style={{
+                          position: 'relative', overflow: 'hidden',
+                          padding: isMulti ? 2 : 3,
+                          height: isMulti ? 44 : 64,
+                          verticalAlign: 'top',
+                          borderLeft: `${isFirstOfWeek ? 2 : 1}px solid var(--border)`,
+                          background: cellBg,
+                          cursor: moveMode ? 'crosshair' : 'default',
+                        }}
+                      >
                         {cards.map(iv => (
-                          <TaskBar key={iv.id} iv={iv} trades={trades} isMulti={isMulti} weeks={weeks} onClick={() => setSelectedId(iv.id)} />
+                          <TaskBar
+                            key={iv.id}
+                            iv={iv}
+                            trades={trades}
+                            isMulti={isMulti}
+                            weeks={weeks}
+                            inMoveMode={!!moveMode}
+                            onClick={() => {
+                              if (!moveMode) setSelectedId(iv.id)
+                            }}
+                          />
                         ))}
                       </td>
                     )
@@ -300,6 +696,26 @@ export default function PlanningScreen({ interventions, zones, trades, onUpdate 
             onUpdate(selectedIv.id, patch)
             setSelectedId(null)
           }}
+          onStartMove={() => {
+            setMoveMode({ iv: selectedIv, mode: 'move' })
+            setSelectedId(null)
+          }}
+          onStartDuplicate={() => {
+            setMoveMode({ iv: selectedIv, mode: 'dup' })
+            setSelectedId(null)
+          }}
+        />
+      )}
+
+      {/* AddTask modal */}
+      {showAdd && (
+        <AddTaskModal
+          zones={zones}
+          trades={trades}
+          defaultZone={addDefaults.zone}
+          defaultDate={addDefaults.date}
+          onClose={() => setShowAdd(false)}
+          onAdd={onAdd}
         />
       )}
     </div>
@@ -308,18 +724,32 @@ export default function PlanningScreen({ interventions, zones, trades, onUpdate 
 
 // ─── Task bar inside a cell ───────────────────────────────────────────────────
 
-function TaskBar({ iv, trades, isMulti, weeks, onClick }: {
-  iv: Intervention; trades: Trade[]; isMulti: boolean; weeks: number; onClick: () => void
+function TaskBar({ iv, trades, isMulti, weeks, inMoveMode, onClick }: {
+  iv: Intervention; trades: Trade[]; isMulti: boolean; weeks: number; inMoveMode: boolean; onClick: () => void
 }) {
   const trade = trades.find(t => t.id === iv.trade)
   const tc    = getTradeColor(trade?.color ?? 'blue')
   const es    = effectiveStatus(iv)
   const sm    = STATUS_META[es]
 
+  const baseStyle: React.CSSProperties = {
+    opacity: inMoveMode ? 0.5 : 1,
+    cursor:  inMoveMode ? 'crosshair' : 'pointer',
+  }
+
+  function handleClick(e: React.MouseEvent) {
+    if (!inMoveMode) {
+      e.stopPropagation()
+      onClick()
+    }
+    // in move mode, let click propagate to the parent TD
+  }
+
   if (isMulti) {
     return (
-      <div onClick={e => { e.stopPropagation(); onClick() }} style={{
-        borderRadius: 4, padding: weeks === 2 ? '3px 4px' : '2px 3px', marginBottom: 1, cursor: 'pointer',
+      <div onClick={handleClick} style={{
+        ...baseStyle,
+        borderRadius: 4, padding: weeks === 2 ? '3px 4px' : '2px 3px', marginBottom: 1,
         background: tc.bg, borderLeft: `3px solid ${tc.b}`, border: `1px solid ${tc.b}30`,
         overflow: 'hidden',
       }}>
@@ -341,8 +771,9 @@ function TaskBar({ iv, trades, isMulti, weeks, onClick }: {
 
   // Single week — full card
   return (
-    <div onClick={e => { e.stopPropagation(); onClick() }} style={{
-      borderRadius: 8, marginBottom: 4, cursor: 'pointer',
+    <div onClick={handleClick} style={{
+      ...baseStyle,
+      borderRadius: 8, marginBottom: 4,
       background: tc.bg, borderLeft: `3px solid ${tc.b}`,
       border: `1px solid ${tc.b}30`, padding: '4px 6px',
       overflow: 'hidden',
@@ -369,9 +800,9 @@ function TaskBar({ iv, trades, isMulti, weeks, onClick }: {
 
 function deadlineColor(deadline: string | null | undefined): string {
   if (!deadline) return 'var(--muted)'
-  const today = new Date(); today.setHours(0, 0, 0, 0)
-  const d     = new Date(deadline + 'T00:00:00')
-  const diff  = Math.round((d.getTime() - today.getTime()) / 86400000)
+  const today2 = new Date(); today2.setHours(0, 0, 0, 0)
+  const d      = new Date(deadline + 'T00:00:00')
+  const diff   = Math.round((d.getTime() - today2.getTime()) / 86400000)
   if (diff < 0)  return '#DC2626'
   if (diff < 14) return '#EA580C'
   if (diff < 30) return '#D97706'
@@ -388,9 +819,9 @@ function DeadlineCell({ zone, isMulti }: { zone: Zone; isMulti: boolean }) {
   }
 
   const dc   = deadlineColor(zone.deadline)
-  const today = new Date(); today.setHours(0, 0, 0, 0)
+  const today3 = new Date(); today3.setHours(0, 0, 0, 0)
   const d    = new Date(zone.deadline + 'T00:00:00')
-  const diff = Math.round((d.getTime() - today.getTime()) / 86400000)
+  const diff = Math.round((d.getTime() - today3.getTime()) / 86400000)
   const lbl  = diff < 0 ? `▲` : `J-${diff}`
   const ds2  = zone.deadline.slice(5, 10).replace('-', '/')
 
@@ -417,3 +848,4 @@ const navBtnStyle: React.CSSProperties = {
   background: 'var(--surface-2)', cursor: 'pointer', fontSize: 16, lineHeight: 1,
   display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text)',
 }
+
