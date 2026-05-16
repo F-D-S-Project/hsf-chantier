@@ -20,10 +20,9 @@ interface Props {
 }
 
 export default function TaskDetail({ iv, zones, trades, allInterventions, onClose, onUpdate, onStartMove, onStartDuplicate }: Props) {
-  const [saving, setSaving]     = useState(false)
-  const [status, setStatus]     = useState<Status>(iv.status as Status)
-  const [notes, setNotes]       = useState(iv.notes ?? '')
-  const [progress, setProgress] = useState(iv.progress ?? 0)
+  const [saving, setSaving] = useState(false)
+  const [status, setStatus] = useState<Status>(iv.status as Status)
+  const [notes, setNotes]   = useState(iv.notes ?? '')
 
   const zone  = zones.find(z => z.id === iv.zone)
   const trade = trades.find(t => t.id === iv.trade)
@@ -35,11 +34,11 @@ export default function TaskDetail({ iv, zones, trades, allInterventions, onClos
   const predecessor = iv.predecessor_id ? allInterventions.find(x => x.id === iv.predecessor_id) : null
   const successors  = (iv.successor_ids ?? []).map(id => allInterventions.find(x => x.id === id)).filter(Boolean) as Intervention[]
 
-  const hasChanges = status !== iv.status || notes !== (iv.notes ?? '') || progress !== (iv.progress ?? 0)
+  const hasChanges = status !== iv.status || notes !== (iv.notes ?? '')
 
   async function handleSave() {
     setSaving(true)
-    const patch: Partial<Intervention> = { status, notes, progress }
+    const patch: Partial<Intervention> = { status, notes }
     const { error } = await supabase.from('interventions').update(patch).eq('id', iv.id)
     setSaving(false)
     if (!error) onUpdate(patch)
@@ -174,20 +173,6 @@ export default function TaskDetail({ iv, zones, trades, allInterventions, onClos
                   </button>
                 )
               })}
-            </div>
-          </div>
-
-          {/* Editable: Progress */}
-          <div style={{ marginBottom: 14 }}>
-            <label style={labelStyle}>Avancement manuel : <strong>{progress}%</strong></label>
-            <input
-              type="range" min={0} max={100} step={5}
-              value={progress}
-              onChange={e => setProgress(Number(e.target.value))}
-              style={{ width: '100%', marginTop: 8, accentColor: 'var(--primary)' }}
-            />
-            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10, color: 'var(--xmuted)', marginTop: 2 }}>
-              <span>0%</span><span>50%</span><span>100%</span>
             </div>
           </div>
 

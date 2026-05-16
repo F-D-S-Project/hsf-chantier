@@ -1,7 +1,7 @@
 'use client'
 
 import { useRef, useState } from 'react'
-import type { Intervention, Zone, Trade } from '@/types/database'
+import type { Intervention, Zone, Trade, Company } from '@/types/database'
 import { effectiveStatus } from '@/lib/progress'
 import { STATUS_META } from '@/constants/status'
 import { getTradeColor, getZoneFloorColor } from '@/constants/colors'
@@ -15,6 +15,7 @@ interface Props {
   interventions: Intervention[]
   zones: Zone[]
   trades: Trade[]
+  companies: Company[]
   onUpdate: (id: string, patch: Partial<Intervention>) => void
   onAdd: (iv: Intervention) => void
 }
@@ -132,23 +133,31 @@ function isHoliday(dateStr: string): boolean {
 interface AddTaskModalProps {
   zones: Zone[]
   trades: Trade[]
+  companies: Company[]
   defaultZone?: string
   defaultDate?: string
   onClose: () => void
   onAdd: (iv: Intervention) => void
 }
 
-function AddTaskModal({ zones, trades, defaultZone, defaultDate, onClose, onAdd }: AddTaskModalProps) {
+function AddTaskModal({ zones, trades, companies, defaultZone, defaultDate, onClose, onAdd }: AddTaskModalProps) {
   const today = todayStr()
+  const firstTradeId = trades[0]?.id ?? ''
+  const firstCompany = companies.find(c => c.trade_id === firstTradeId)?.name ?? ''
   const [zoneId,    setZoneId]    = useState(defaultZone ?? zones[0]?.id ?? '')
-  const [tradeId,   setTradeId]   = useState(trades[0]?.id ?? '')
-  const [company,   setCompany]   = useState('')
+  const [tradeId,   setTradeId]   = useState(firstTradeId)
+  const [company,   setCompany]   = useState(firstCompany)
   const [task,      setTask]      = useState('')
   const [startDate, setStartDate] = useState(defaultDate ?? today)
   const [endDate,   setEndDate]   = useState(defaultDate ?? today)
-  const [priority,  setPriority]  = useState<1 | 2 | 3>(3)
   const [saving,    setSaving]    = useState(false)
   const [error,     setError]     = useState<string | null>(null)
+
+  function handleTradeChange(newTradeId: string) {
+    setTradeId(newTradeId)
+    const autoCompany = companies.find(c => c.trade_id === newTradeId)?.name ?? ''
+    setCompany(autoCompany)
+  }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -164,7 +173,7 @@ function AddTaskModal({ zones, trades, defaultZone, defaultDate, onClose, onAdd 
       start_date: startDate,
       end_date:   endDate >= startDate ? endDate : startDate,
       status:     'arealis' as const,
-      priority,
+      priority:   3 as const,
       prereq:     '',
       notes:      '',
       predecessor_id:   null,
@@ -182,12 +191,6 @@ function AddTaskModal({ zones, trades, defaultZone, defaultDate, onClose, onAdd 
     onAdd(data as Intervention)
     onClose()
   }
-
-  const prioCfg: { value: 1 | 2 | 3; label: string; color: string; bg: string }[] = [
-    { value: 3, label: 'Normale',  color: '#6B7280', bg: 'var(--surface-2)' },
-    { value: 2, label: 'Haute',    color: '#EA580C', bg: '#FFF7ED' },
-    { value: 1, label: 'Critique', color: '#DC2626', bg: '#FEF2F2' },
-  ]
 
   return (
     <>
@@ -225,7 +228,7 @@ function AddTaskModal({ zones, trades, defaultZone, defaultDate, onClose, onAdd 
             {/* Corps de métier */}
             <div>
               <label style={modalLabelStyle}>Corps de métier</label>
-              <select value={tradeId} onChange={e => setTradeId(e.target.value)} style={modalSelectStyle}>
+              <select value={tradeId} onChange={e => handleTradeChange(e.target.value)} style={modalSelectStyle}>
                 {trades.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
               </select>
             </div>
@@ -277,28 +280,6 @@ function AddTaskModal({ zones, trades, defaultZone, defaultDate, onClose, onAdd 
               </div>
             </div>
 
-            {/* Priorité */}
-            <div>
-              <label style={modalLabelStyle}>Priorité</label>
-              <div style={{ display: 'flex', gap: 8, marginTop: 6 }}>
-                {prioCfg.map(p => (
-                  <button
-                    key={p.value}
-                    type="button"
-                    onClick={() => setPriority(p.value)}
-                    style={{
-                      flex: 1, padding: '7px 0', borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: 'pointer',
-                      border: `1px solid ${priority === p.value ? p.color : 'var(--border)'}`,
-                      background: priority === p.value ? p.bg : 'var(--surface-2)',
-                      color: priority === p.value ? p.color : 'var(--muted)',
-                    }}
-                  >
-                    {p.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-
             {error && (
               <div style={{ background: '#FEF2F2', border: '1px solid rgba(220,38,38,.3)', borderRadius: 6, padding: '8px 12px', fontSize: 12, color: '#DC2626' }}>
                 {error}
@@ -343,7 +324,7 @@ const modalSelectStyle: React.CSSProperties = {
 
 type MoveMode = { iv: Intervention; mode: 'move' | 'dup' } | null
 
-export default function PlanningScreen({ interventions, zones, trades, onUpdate, onAdd }: Props) {
+export default function PlanningScreen({ interventions, zones, trades, companies, onUpdate, onAdd }: Props) {
   const [weekOffset, setWeekOffset] = useState(0)
   const [viewMode, setViewMode]     = useState<ViewMode>('1s')
   const [zoneFilter, setZoneFilter] = useState<string[]>([])
@@ -712,6 +693,7 @@ export default function PlanningScreen({ interventions, zones, trades, onUpdate,
         <AddTaskModal
           zones={zones}
           trades={trades}
+          companies={companies}
           defaultZone={addDefaults.zone}
           defaultDate={addDefaults.date}
           onClose={() => setShowAdd(false)}

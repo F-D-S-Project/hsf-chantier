@@ -60,7 +60,7 @@ export default function PlanifyApp() {
       <main style={{ flex: 1, overflow: 'hidden', position: 'relative' }}>
         {screen === 'dashboard' && <DashboardScreen zones={zones} interventions={interventions} />}
         {screen === 'list' && <ListScreen interventions={interventions} zones={zones} trades={trades} onUpdate={handleUpdate} />}
-        {screen === 'planning' && <PlanningScreen interventions={interventions} zones={zones} trades={trades} onUpdate={handleUpdate} onAdd={handleAdd} />}
+        {screen === 'planning' && <PlanningScreen interventions={interventions} zones={zones} trades={trades} companies={companies} onUpdate={handleUpdate} onAdd={handleAdd} />}
         {screen === 'briefings' && <BriefingsScreen interventions={interventions} zones={zones} trades={trades} companies={companies} />}
         {screen === 'settings' && <SettingsScreen zones={zones} trades={trades} companies={companies} onZonesChange={setZones} />}
         {screen !== 'dashboard' && screen !== 'list' && screen !== 'planning' && screen !== 'briefings' && screen !== 'settings' && <ComingSoon screen={screen} />}
