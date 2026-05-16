@@ -1,5 +1,3 @@
-
-
 <!DOCTYPE html>
 <html lang="fr" data-theme="terrain">
 <head>
@@ -9401,7 +9399,7 @@ function TaskQuickView({ data, zones, trades, initialStatus, onClose }) {
 }
 
 function BriefingsScreen({ data, zones, trades, companies, session }) {
-  const [weekOff,    setWeekOff]    = useState(0);
+  const [selectedWeeks, setSelectedWeeks] = useState([0]);
   const [expanded,   setExpanded]   = useState(null);
   const [copied,     setCopied]     = useState(null);
   const [recapOpen,  setRecapOpen]  = useState(false);
@@ -9522,14 +9520,12 @@ function BriefingsScreen({ data, zones, trades, companies, session }) {
     }
     return {start:ds(mon), end:ds(fri)};
   }
-  var week0 = getWeek(0);
-  var week1 = getWeek(1);
-  var week2 = getWeek(2);
-  var activeWeeks = [week0, week1, week2].slice(0, weekOff + 1);
+  var allWks = [getWeek(0), getWeek(1), getWeek(2)];
+  var activeWeeks = allWks.filter(function(_, i){ return selectedWeeks.indexOf(i) !== -1; });
+  if (!activeWeeks.length) activeWeeks = [allWks[0]];
   var week = {start: activeWeeks[0].start, end: activeWeeks[activeWeeks.length-1].end};
-  var weekLabel = weekOff===0 ? 'Semaine en cours'
-    : weekOff===1 ? 'Sem. en cours + S+1'
-    : 'Sem. en cours + S+1 + S+2';
+  var weekNames = ['Sem. en cours', 'S+1', 'S+2'];
+  var weekLabel = selectedWeeks.slice().sort().map(function(i){ return weekNames[i]; }).join(' + ') || 'Sem. en cours';
 
   function overlapsWeek(iv) {
     var s=iv.start||'', e=iv.end||s;
@@ -9575,10 +9571,10 @@ function BriefingsScreen({ data, zones, trades, companies, session }) {
       phone: String.fromCodePoint(0x1F4F1),
     };
     var prenom=(contact.name||'').split(' ')[0]||co.name;
-    var multiWk=(weekOff>0);
-    var wd=weekOff===0?'cette semaine'
-      :weekOff===1?'les 2 prochaines semaines'
-      :'les 3 prochaines semaines';
+    var multiWk=(activeWeeks.length>1);
+    var wd = activeWeeks.length===1
+      ? (selectedWeeks[0]===0 ? 'cette semaine' : selectedWeeks[0]===1 ? 'la semaine prochaine' : 'dans 2 semaines')
+      : 'les semaines sélectionnées';
     function pushZones(theIvs){
       var byZone={};
       theIvs.forEach(function(iv){ var zn=getZoneName(iv.zone); if(!byZone[zn])byZone[zn]=[]; byZone[zn].push(iv); });
@@ -9603,8 +9599,8 @@ function BriefingsScreen({ data, zones, trades, companies, session }) {
     var L=[];
     L.push('*Planify \u2014 HSF Av. Marceau*');
     if(multiWk){
-      L.push('Semaine en cours'+(weekOff===1?' + semaine suivante':' + 2 semaines suivantes'));
-      L.push('Du lundi '+fmtShort(week0.start)+' au vendredi '+fmtShort(activeWeeks[activeWeeks.length-1].end));
+      L.push(weekLabel);
+      L.push('Du lundi '+fmtShort(activeWeeks[0].start)+' au vendredi '+fmtShort(activeWeeks[activeWeeks.length-1].end));
     } else {
       L.push('Semaine du '+fmtShort(week.start)+' au '+fmtShort(week.end));
     }
@@ -9647,8 +9643,8 @@ function BriefingsScreen({ data, zones, trades, companies, session }) {
       cal: String.fromCodePoint(0x1F4C5),
       pin: String.fromCodePoint(0x1F4CD),
     };
-    var multiWk = (weekOff > 0);
-    var nWeeks = weekOff + 1;
+    var multiWk = (activeWeeks.length > 1);
+    var nWeeks = activeWeeks.length;
     function localDs(d) {
       return d.getFullYear()+'-'
         +String(d.getMonth()+1).padStart(2,'0')+'-'
@@ -10714,21 +10710,37 @@ function BriefingsScreen({ data, zones, trades, companies, session }) {
       </div>
 
       {/* ── Semaine ── */}
-      <div style={{display:'flex',gap:6,marginBottom:12}}>
-        {[
-          {o:0, lbl:'Cette semaine'},
-          {o:1, lbl:'Semaine suivante'},
-          {o:2, lbl:'Dans 2 semaines'},
-        ].map(function(item){
-          var active=weekOff===item.o;
-          return <button key={item.o} onClick={function(){setWeekOff(item.o);setExpanded(null);}}
-            style={{...btnSt,flex:1,justifyContent:'center',fontSize:11,
-              background:active?'var(--primary)':'transparent',
-              color:active?'#fff':'var(--text)',
-              border:active?'1px solid var(--primary)':'1px solid var(--border)'}}>
-            {item.lbl}
-          </button>;
-        })}
+      <div style={{marginBottom:10}}>
+        <div style={{fontSize:10,fontWeight:700,color:'var(--muted)',textTransform:'uppercase',letterSpacing:'.06em',marginBottom:6}}>Semaines à inclure dans les briefings</div>
+        <div style={{display:'flex',gap:6}}>
+          {[
+            {o:0, lbl:'Cette semaine', sub:'S'},
+            {o:1, lbl:'Semaine suivante', sub:'S+1'},
+            {o:2, lbl:'Dans 2 semaines', sub:'S+2'},
+          ].map(function(item){
+            var active=selectedWeeks.indexOf(item.o)!==-1;
+            return <button key={item.o} onClick={function(){
+              setExpanded(null);
+              setSelectedWeeks(function(prev){
+                var idx=prev.indexOf(item.o);
+                if(idx===-1){ return prev.concat([item.o]).sort(function(a,b){return a-b;}); }
+                // Ne pas désélectionner si c'est le dernier
+                if(prev.length===1) return prev;
+                return prev.filter(function(x){return x!==item.o;});
+              });
+            }}
+              style={{flex:1,display:'flex',flexDirection:'column',alignItems:'center',gap:2,
+                padding:'8px 6px',borderRadius:'var(--r-sm)',fontSize:11,fontWeight:700,cursor:'pointer',
+                fontFamily:"'DM Sans',sans-serif",border:'2px solid '+(active?'var(--primary)':'var(--border)'),
+                background:active?'var(--primary-l)':'transparent',
+                color:active?'var(--primary)':'var(--muted)',
+                transition:'all .15s',userSelect:'none'}}>
+              <span style={{fontSize:13,fontWeight:800,color:active?'var(--primary)':'var(--text)'}}>{item.sub}</span>
+              <span style={{fontSize:10,fontWeight:500,color:active?'var(--primary)':'var(--muted)',textAlign:'center',lineHeight:1.2}}>{item.lbl}</span>
+              {active&&<span style={{width:6,height:6,borderRadius:'50%',background:'var(--primary)',marginTop:2}}/>}
+            </button>;
+          })}
+        </div>
       </div>
 
       {/* ── Stats semaine ── */}
