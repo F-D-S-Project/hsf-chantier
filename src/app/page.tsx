@@ -1,6 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useState } from 'react'
+import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 import type { Intervention, Zone, Trade, Company } from '@/types/database'
 import { computeProjectHealth, effectiveStatus } from '@/lib/progress'
@@ -32,6 +33,7 @@ type Screen = 'dashboard' | 'planning' | 'list' | 'briefings' | 'settings'
 type CompanyScreen = 'mytasks' | 'planning'
 
 export default function PlanifyApp() {
+  const router = useRouter()
   const [screen, setScreen]       = useState<Screen>('dashboard')
   const [coScreen, setCoScreen]   = useState<CompanyScreen>('mytasks')
   const [loading, setLoading]     = useState(true)
@@ -42,6 +44,7 @@ export default function PlanifyApp() {
   const [companies, setCompanies]           = useState<Company[]>([])
   const [userRole, setUserRole]             = useState<'admin' | 'company'>('admin')
   const [userCompany, setUserCompany]       = useState<string | null>(null)
+  const [authorName, setAuthorName]         = useState<string>('Admin')
 
   useEffect(() => {
     Promise.all([
@@ -53,6 +56,7 @@ export default function PlanifyApp() {
       const role = user?.user_metadata?.role ?? 'admin'
       const co   = user?.user_metadata?.company_name ?? null
       setUserRole(role); setUserCompany(co)
+      setAuthorName(co ?? user?.email?.split('@')[0] ?? 'Admin')
     })
     .catch(e => setError(String(e)))
     .finally(() => setLoading(false))
@@ -66,6 +70,12 @@ export default function PlanifyApp() {
     setInterventions(prev => [...prev, iv])
   }, [])
 
+  async function handleLogout() {
+    await supabase.auth.signOut()
+    router.push('/login')
+    router.refresh()
+  }
+
   if (loading) return <Loader />
   if (error)   return <ErrorScreen message={error} />
 
@@ -73,9 +83,18 @@ export default function PlanifyApp() {
   if (userRole === 'company' && userCompany) {
     return (
       <div style={{ height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-        <header style={{ background: 'var(--hdr)', color: 'var(--hdr-text)', padding: '0 16px', height: 52, display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0, zIndex: 50 }}>
-          <span style={{ fontWeight: 700, fontSize: 16, letterSpacing: '-.3px' }}>{userCompany}</span>
-          <span style={{ fontSize: 11, opacity: .5, fontWeight: 500 }}>HSF Av. Marceau</span>
+        <header style={{ background: 'var(--hdr)', color: 'var(--hdr-text)', padding: '0 16px', height: 52, display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0, zIndex: 50 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <span style={{ fontWeight: 900, fontSize: 13, letterSpacing: '.06em', opacity: .45 }}>PLANIFY</span>
+            <span style={{ width: 1, height: 16, background: 'rgba(255,255,255,.2)' }} />
+            <span style={{ fontWeight: 700, fontSize: 15, letterSpacing: '-.3px' }}>{userCompany}</span>
+            <span style={{ fontSize: 11, opacity: .4, fontWeight: 500 }}>HSF Av. Marceau</span>
+          </div>
+          <button onClick={handleLogout} style={{
+            background: 'rgba(255,255,255,.08)', border: '1px solid rgba(255,255,255,.15)',
+            borderRadius: 7, padding: '5px 10px', color: 'rgba(255,255,255,.7)',
+            fontSize: 11, fontWeight: 600, cursor: 'pointer', letterSpacing: '.02em',
+          }}>Déconnexion</button>
         </header>
         <main style={{ flex: 1, overflow: 'hidden', position: 'relative' }}>
           {coScreen === 'mytasks' && (
@@ -83,6 +102,7 @@ export default function PlanifyApp() {
               companyName={userCompany}
               interventions={interventions}
               zones={zones} trades={trades} companies={companies}
+              authorName={authorName}
               onUpdate={handleUpdate}
             />
           )}
@@ -91,6 +111,7 @@ export default function PlanifyApp() {
               interventions={interventions} zones={zones} trades={trades} companies={companies}
               highlightCompany={userCompany}
               readOnly
+              authorName={authorName}
               onUpdate={handleUpdate} onAdd={handleAdd}
             />
           )}
@@ -118,7 +139,7 @@ export default function PlanifyApp() {
   // ── Vue admin ──
   return (
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-      <AppHeader screen={screen} onNavigate={setScreen} interventions={interventions} />
+      <AppHeader screen={screen} onNavigate={setScreen} interventions={interventions} onLogout={handleLogout} />
       <main style={{ flex: 1, overflow: 'hidden', position: 'relative' }}>
         {screen === 'dashboard' && <DashboardScreen zones={zones} interventions={interventions} trades={trades} onUpdate={handleUpdate} />}
         {screen === 'list' && <ListScreen interventions={interventions} zones={zones} trades={trades} onUpdate={handleUpdate} />}
@@ -133,12 +154,12 @@ export default function PlanifyApp() {
 
 // ─── Header ───────────────────────────────────────────────────────────────────
 
-function AppHeader({ screen, onNavigate, interventions }: {
-  screen: Screen; onNavigate: (s: Screen) => void; interventions: Intervention[]
+function AppHeader({ screen, onNavigate, interventions, onLogout }: {
+  screen: Screen; onNavigate: (s: Screen) => void; interventions: Intervention[]; onLogout: () => void
 }) {
   const blocked = interventions.filter(iv => iv.status === 'bloque').length
   const labels: Record<Screen, string> = {
-    dashboard: 'Planify', planning: 'Planning', list: 'Tâches', briefings: 'Briefings', settings: 'Paramètres',
+    dashboard: 'Dashboard', planning: 'Planning', list: 'Tâches', briefings: 'Briefings', settings: 'Paramètres',
   }
   return (
     <header style={{
@@ -147,20 +168,29 @@ function AppHeader({ screen, onNavigate, interventions }: {
       justifyContent: 'space-between', flexShrink: 0, zIndex: 50,
     }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-        <span style={{ fontWeight: 700, fontSize: 16, letterSpacing: '-.3px' }}>{labels[screen]}</span>
+        <span style={{ fontWeight: 900, fontSize: 13, letterSpacing: '.06em', opacity: .45 }}>PLANIFY</span>
+        <span style={{ width: 1, height: 16, background: 'rgba(255,255,255,.2)' }} />
+        <span style={{ fontWeight: 700, fontSize: 15, letterSpacing: '-.3px' }}>{labels[screen]}</span>
         {screen === 'dashboard' && (
-          <span style={{ fontSize: 11, opacity: .5, fontWeight: 500 }}>HSF Av. Marceau</span>
+          <span style={{ fontSize: 11, opacity: .4, fontWeight: 500 }}>HSF Av. Marceau</span>
         )}
       </div>
-      {blocked > 0 && (
-        <button onClick={() => onNavigate('list')} style={{
-          background: 'rgba(220,38,38,.18)', border: '1px solid rgba(220,38,38,.3)',
-          borderRadius: 6, padding: '3px 8px', color: '#F87171',
-          fontSize: 11, fontWeight: 600, cursor: 'pointer',
-        }}>
-          ⚠ {blocked} bloquée{blocked > 1 ? 's' : ''}
-        </button>
-      )}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        {blocked > 0 && (
+          <button onClick={() => onNavigate('list')} style={{
+            background: 'rgba(220,38,38,.18)', border: '1px solid rgba(220,38,38,.3)',
+            borderRadius: 6, padding: '3px 8px', color: '#F87171',
+            fontSize: 11, fontWeight: 600, cursor: 'pointer',
+          }}>
+            ⚠ {blocked} bloquée{blocked > 1 ? 's' : ''}
+          </button>
+        )}
+        <button onClick={onLogout} style={{
+          background: 'rgba(255,255,255,.08)', border: '1px solid rgba(255,255,255,.15)',
+          borderRadius: 7, padding: '5px 10px', color: 'rgba(255,255,255,.7)',
+          fontSize: 11, fontWeight: 600, cursor: 'pointer', letterSpacing: '.02em',
+        }}>Déconnexion</button>
+      </div>
     </header>
   )
 }

@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import type { Intervention, Zone, Trade, Status } from '@/types/database'
 import { effectiveStatus } from '@/lib/progress'
 import { STATUS_META, STATUS_OPTIONS } from '@/constants/status'
@@ -8,22 +8,45 @@ import { getTradeColor, getZoneFloorColor } from '@/constants/colors'
 import { fmtDate, daysOverdue } from '@/lib/dates'
 import { supabase } from '@/lib/supabase'
 
+interface NoteEntry {
+  id: string
+  content: string
+  author_name: string
+  created_at: string
+}
+
 interface Props {
   iv: Intervention
   zones: Zone[]
   trades: Trade[]
   allInterventions: Intervention[]
+  readOnly?: boolean
+  authorName?: string
   onClose: () => void
   onUpdate: (patch: Partial<Intervention>) => void
   onStartMove?: () => void
   onStartDuplicate?: () => void
 }
 
-export default function TaskDetail({ iv, zones, trades, allInterventions, onClose, onUpdate, onStartMove, onStartDuplicate }: Props) {
+export default function TaskDetail({ iv, zones, trades, allInterventions, readOnly, authorName, onClose, onUpdate, onStartMove, onStartDuplicate }: Props) {
   const [saving, setSaving]   = useState(false)
   const [editing, setEditing] = useState(false)
   const [status, setStatus]   = useState<Status>(iv.status as Status)
   const [notes, setNotes]     = useState(iv.notes ?? '')
+
+  // History notes
+  const [notesList, setNotesList]   = useState<NoteEntry[]>([])
+  const [newNote, setNewNote]       = useState('')
+  const [addingNote, setAddingNote] = useState(false)
+
+  useEffect(() => {
+    supabase
+      .from('intervention_notes')
+      .select('*')
+      .eq('intervention_id', iv.id)
+      .order('created_at', { ascending: true })
+      .then(({ data }) => { if (data) setNotesList(data as NoteEntry[]) })
+  }, [iv.id])
 
   // Edit-mode fields
   const [editTask,      setEditTask]      = useState(iv.task ?? '')
@@ -66,6 +89,18 @@ export default function TaskDetail({ iv, zones, trades, allInterventions, onClos
     const { error } = await supabase.from('interventions').update(patch).eq('id', iv.id)
     setSaving(false)
     if (!error) { setEditing(false); onUpdate(patch) }
+  }
+
+  async function handleAddNote() {
+    if (!newNote.trim()) return
+    setAddingNote(true)
+    const entry = { intervention_id: iv.id, content: newNote.trim(), author_name: authorName ?? 'Anonyme' }
+    const { data, error } = await supabase.from('intervention_notes').insert(entry).select().single()
+    setAddingNote(false)
+    if (!error && data) {
+      setNotesList(prev => [...prev, data as NoteEntry])
+      setNewNote('')
+    }
   }
 
   return (
@@ -131,7 +166,7 @@ export default function TaskDetail({ iv, zones, trades, allInterventions, onClos
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 4, flexShrink: 0 }}>
             <button onClick={onClose} style={{ border: 'none', background: 'var(--surface-2)', borderRadius: 8, width: 32, height: 32, cursor: 'pointer', fontSize: 18, color: 'var(--muted)' }}>×</button>
-            <button onClick={() => setEditing(e => !e)} style={{ border: `1px solid ${editing ? 'var(--primary)' : 'var(--border)'}`, background: editing ? 'var(--primary-l)' : 'var(--surface-2)', borderRadius: 8, width: 32, height: 32, cursor: 'pointer', fontSize: 13, color: editing ? 'var(--primary)' : 'var(--muted)' }}>✎</button>
+            {!readOnly && <button onClick={() => setEditing(e => !e)} style={{ border: `1px solid ${editing ? 'var(--primary)' : 'var(--border)'}`, background: editing ? 'var(--primary-l)' : 'var(--surface-2)', borderRadius: 8, width: 32, height: 32, cursor: 'pointer', fontSize: 13, color: editing ? 'var(--primary)' : 'var(--muted)' }}>✎</button>}
           </div>
         </div>
 
@@ -174,7 +209,6 @@ export default function TaskDetail({ iv, zones, trades, allInterventions, onClos
             <InfoRow label="Jours gelés">
               {editing ? (
                 <div>
-                  {/* Existing chips */}
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: editOffDays.length > 0 ? 8 : 0 }}>
                     {editOffDays.sort().map(d => (
                       <span key={d} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, background: 'rgba(220,38,38,.1)', border: '1px solid rgba(220,38,38,.3)', borderRadius: 20, padding: '3px 8px', fontSize: 12, color: '#991B1B' }}>
@@ -183,25 +217,12 @@ export default function TaskDetail({ iv, zones, trades, allInterventions, onClos
                       </span>
                     ))}
                   </div>
-                  {/* Add new day */}
                   <div style={{ display: 'flex', gap: 6 }}>
-                    <input
-                      type="date"
-                      value={newOffDay}
-                      onChange={e => setNewOffDay(e.target.value)}
-                      style={{ ...inputStyle, flex: 1 }}
-                    />
+                    <input type="date" value={newOffDay} onChange={e => setNewOffDay(e.target.value)} style={{ ...inputStyle, flex: 1 }} />
                     <button
-                      onClick={() => {
-                        if (newOffDay && !editOffDays.includes(newOffDay)) {
-                          setEditOffDays(prev => [...prev, newOffDay])
-                          setNewOffDay('')
-                        }
-                      }}
+                      onClick={() => { if (newOffDay && !editOffDays.includes(newOffDay)) { setEditOffDays(prev => [...prev, newOffDay]); setNewOffDay('') } }}
                       style={{ padding: '7px 14px', borderRadius: 'var(--r-xs)', border: '1px solid var(--primary)', background: 'var(--primary-l)', color: 'var(--primary)', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}
-                    >
-                      + Ajouter
-                    </button>
+                    >+ Ajouter</button>
                   </div>
                 </div>
               ) : (
@@ -212,12 +233,7 @@ export default function TaskDetail({ iv, zones, trades, allInterventions, onClos
             </InfoRow>
           )}
 
-          {/* Priority */}
-          <InfoRow label="Priorité">
-            <PriorityBadge priority={iv.priority} />
-          </InfoRow>
-
-          <div style={{ height: 1, background: 'var(--border)', margin: '14px 0' }} />
+          <div style={{ height: 1, background: 'var(--border)', margin: '4px 0 14px' }} />
 
           {/* Edit mode fields */}
           {editing && (
@@ -252,95 +268,155 @@ export default function TaskDetail({ iv, zones, trades, allInterventions, onClos
                   <input type="date" value={editEndDate} onChange={e => setEditEndDate(e.target.value)} style={inputStyle} />
                 </div>
               </div>
+              <div>
+                <label style={labelStyle}>Note interne</label>
+                <textarea
+                  value={notes}
+                  onChange={e => setNotes(e.target.value)}
+                  rows={2}
+                  style={{ ...inputStyle, resize: 'vertical', marginTop: 4 }}
+                  placeholder="Note interne (admin)…"
+                />
+              </div>
             </div>
           )}
 
-          {/* Editable: Status */}
+          {/* Statut */}
           <div style={{ marginBottom: 14 }}>
             <label style={labelStyle}>Statut</label>
-            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 6 }}>
-              {STATUS_OPTIONS.map(s => {
-                const m = STATUS_META[s]
-                const active = status === s
-                return (
-                  <button
-                    key={s}
-                    onClick={() => setStatus(s)}
-                    style={{
-                      padding: '5px 12px', borderRadius: 20, fontSize: 12, fontWeight: 600, cursor: 'pointer',
-                      border: `1px solid ${active ? m.dot : 'var(--border)'}`,
-                      background: active ? m.bg : 'var(--surface-2)',
-                      color: active ? m.dot : 'var(--muted)',
-                      transition: 'all .12s',
-                    }}
-                  >
-                    {m.label}
-                  </button>
-                )
-              })}
-            </div>
+            {readOnly ? (
+              <div style={{ marginTop: 6 }}>
+                <span style={{ fontSize: 12, fontWeight: 600, color: sm.dot, background: sm.bg, padding: '4px 12px', borderRadius: 20, border: `1px solid ${sm.dot}40` }}>
+                  {sm.label}
+                </span>
+              </div>
+            ) : (
+              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 6 }}>
+                {STATUS_OPTIONS.map(s => {
+                  const m = STATUS_META[s]
+                  const active = status === s
+                  return (
+                    <button
+                      key={s}
+                      onClick={() => setStatus(s)}
+                      style={{
+                        padding: '5px 12px', borderRadius: 20, fontSize: 12, fontWeight: 600, cursor: 'pointer',
+                        border: `1px solid ${active ? m.dot : 'var(--border)'}`,
+                        background: active ? m.bg : 'var(--surface-2)',
+                        color: active ? m.dot : 'var(--muted)',
+                        transition: 'all .12s',
+                      }}
+                    >{m.label}</button>
+                  )
+                })}
+              </div>
+            )}
           </div>
 
-          {/* Editable: Notes */}
+          {/* Notes historique */}
           <div style={{ marginBottom: 14 }}>
-            <label style={labelStyle}>Notes</label>
-            <textarea
-              value={notes}
-              onChange={e => setNotes(e.target.value)}
-              rows={3}
-              style={{
-                width: '100%', marginTop: 6, padding: '8px 10px', borderRadius: 'var(--r-xs)',
-                border: '1px solid var(--border)', background: 'var(--surface-2)',
-                color: 'var(--text)', fontSize: 13, fontFamily: "'DM Sans', sans-serif",
-                resize: 'vertical',
-              }}
-              placeholder="Ajouter une note…"
-            />
+            <label style={labelStyle}>Notes & suivi</label>
+
+            {/* Historique */}
+            {notesList.length > 0 && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 8, marginBottom: 10 }}>
+                {notesList.map(n => (
+                  <div key={n.id} style={{
+                    background: 'var(--surface-2)',
+                    border: '1px solid var(--border)',
+                    borderLeft: `3px solid ${tc.b}`,
+                    borderRadius: 'var(--r-xs)',
+                    padding: '9px 11px',
+                  }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 5 }}>
+                      <span style={{ fontSize: 11, fontWeight: 700, color: tc.b }}>{n.author_name}</span>
+                      <span style={{ fontSize: 10, color: 'var(--xmuted)', fontFamily: "'DM Mono', monospace" }}>
+                        {new Date(n.created_at).toLocaleDateString('fr-FR', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}
+                      </span>
+                    </div>
+                    <div style={{ fontSize: 13, color: 'var(--text)', lineHeight: 1.5, fontWeight: 500 }}>
+                      {n.content}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Formulaire ajout */}
+            <div style={{
+              background: 'var(--surface-2)',
+              border: `1px solid ${newNote.trim() ? 'var(--primary)' : 'var(--border)'}`,
+              borderRadius: 'var(--r-xs)',
+              padding: '10px 12px',
+              transition: 'border-color .15s',
+            }}>
+              <textarea
+                value={newNote}
+                onChange={e => setNewNote(e.target.value)}
+                rows={2}
+                placeholder="Ajouter une note ou un commentaire…"
+                style={{
+                  width: '100%', border: 'none', background: 'transparent',
+                  color: 'var(--text)', fontSize: 13, fontFamily: "'DM Sans', sans-serif",
+                  resize: 'none', outline: 'none', lineHeight: 1.5,
+                  boxSizing: 'border-box',
+                }}
+              />
+              {newNote.trim() && (
+                <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 6 }}>
+                  <button
+                    onClick={handleAddNote}
+                    disabled={addingNote}
+                    style={{
+                      padding: '6px 16px', borderRadius: 'var(--r-xs)', border: 'none',
+                      background: 'var(--primary)', color: '#fff',
+                      fontSize: 12, fontWeight: 700, cursor: 'pointer',
+                    }}
+                  >{addingNote ? 'Envoi…' : 'Publier'}</button>
+                </div>
+              )}
+            </div>
           </div>
         </div>
 
         {/* Footer */}
         <div style={{ padding: '12px 16px', borderTop: '1px solid var(--border)', display: 'flex', flexDirection: 'column', gap: 8, flexShrink: 0 }}>
-          {/* Move / Duplicate row */}
-          {(onStartMove || onStartDuplicate) && (
+          {!readOnly && (onStartMove || onStartDuplicate) && (
             <div style={{ display: 'flex', gap: 8 }}>
               {onStartMove && (
-                <button
-                  onClick={onStartMove}
-                  style={{ flex: 1, padding: '9px 0', borderRadius: 'var(--r-sm)', border: '1px solid #3B82F6', background: '#EFF6FF', color: '#1D4ED8', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}
-                >
+                <button onClick={onStartMove} style={{ flex: 1, padding: '9px 0', borderRadius: 'var(--r-sm)', border: '1px solid #3B82F6', background: '#EFF6FF', color: '#1D4ED8', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>
                   ↕ Déplacer
                 </button>
               )}
               {onStartDuplicate && (
-                <button
-                  onClick={onStartDuplicate}
-                  style={{ flex: 1, padding: '9px 0', borderRadius: 'var(--r-sm)', border: '1px solid #22C55E', background: '#F0FDF4', color: '#15803D', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}
-                >
+                <button onClick={onStartDuplicate} style={{ flex: 1, padding: '9px 0', borderRadius: 'var(--r-sm)', border: '1px solid #22C55E', background: '#F0FDF4', color: '#15803D', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>
                   ⊕ Dupliquer
                 </button>
               )}
             </div>
           )}
-          {/* Annuler / Enregistrer row */}
-          <div style={{ display: 'flex', gap: 8 }}>
-            <button onClick={onClose} style={{ flex: 1, padding: '11px 0', borderRadius: 'var(--r-sm)', border: '1px solid var(--border)', background: 'var(--surface-2)', color: 'var(--muted)', fontSize: 14, fontWeight: 600, cursor: 'pointer' }}>
-              Annuler
+          {readOnly ? (
+            <button onClick={onClose} style={{ padding: '11px 0', borderRadius: 'var(--r-sm)', border: '1px solid var(--border)', background: 'var(--surface-2)', color: 'var(--muted)', fontSize: 14, fontWeight: 600, cursor: 'pointer' }}>
+              Fermer
             </button>
-            <button
-              onClick={handleSave}
-              disabled={!hasChanges || saving}
-              style={{
-                flex: 2, padding: '11px 0', borderRadius: 'var(--r-sm)', border: 'none',
-                background: hasChanges ? 'var(--primary)' : 'var(--border)',
-                color: hasChanges ? '#fff' : 'var(--muted)',
-                fontSize: 14, fontWeight: 700, cursor: hasChanges ? 'pointer' : 'default',
-                transition: 'background .15s',
-              }}
-            >
-              {saving ? 'Enregistrement…' : 'Enregistrer'}
-            </button>
-          </div>
+          ) : (
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button onClick={onClose} style={{ flex: 1, padding: '11px 0', borderRadius: 'var(--r-sm)', border: '1px solid var(--border)', background: 'var(--surface-2)', color: 'var(--muted)', fontSize: 14, fontWeight: 600, cursor: 'pointer' }}>
+                Annuler
+              </button>
+              <button
+                onClick={handleSave}
+                disabled={!hasChanges || saving}
+                style={{
+                  flex: 2, padding: '11px 0', borderRadius: 'var(--r-sm)', border: 'none',
+                  background: hasChanges ? 'var(--primary)' : 'var(--border)',
+                  color: hasChanges ? '#fff' : 'var(--muted)',
+                  fontSize: 14, fontWeight: 700, cursor: hasChanges ? 'pointer' : 'default',
+                  transition: 'background .15s',
+                }}
+              >{saving ? 'Enregistrement…' : 'Enregistrer'}</button>
+            </div>
+          )}
         </div>
       </div>
     </>
@@ -369,19 +445,6 @@ function DepBadge({ iv, zones, trades }: { iv: Intervention; zones: Zone[]; trad
       <span style={{ fontWeight: 500 }}>{iv.task_number ?? iv.id}</span>
       <span style={{ color: 'var(--muted)' }}>{iv.task?.slice(0, 40)}{(iv.task?.length ?? 0) > 40 ? '…' : ''}</span>
     </div>
-  )
-}
-
-function PriorityBadge({ priority }: { priority: number }) {
-  const cfg = priority === 1
-    ? { label: 'Critique', color: '#DC2626', bg: '#FEF2F2' }
-    : priority === 2
-    ? { label: 'Haute',    color: '#EA580C', bg: '#FFF7ED' }
-    : { label: 'Normale',  color: '#6B7280', bg: 'var(--surface-2)' }
-  return (
-    <span style={{ fontSize: 12, fontWeight: 600, color: cfg.color, background: cfg.bg, padding: '2px 10px', borderRadius: 10, border: `1px solid ${cfg.color}30` }}>
-      {cfg.label}
-    </span>
   )
 }
 
