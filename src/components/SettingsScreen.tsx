@@ -1,6 +1,7 @@
 'use client'
 
 import { useState } from 'react'
+import { useRouter } from 'next/navigation'
 import type { Zone, Trade, Company } from '@/types/database'
 import { getZoneFloorColor, getTradeColor, TRADE_COLORS, type TradeColorKey } from '@/constants/colors'
 import { supabase } from '@/lib/supabase'
@@ -51,10 +52,26 @@ const modalInputStyle: React.CSSProperties = {
 
 export default function SettingsScreen({ zones, trades, companies, onZonesChange, onTradesChange, onCompaniesChange }: Props) {
   const [tab, setTab] = useState<Tab>('zones')
+  const router = useRouter()
+
+  async function handleLogout() {
+    await supabase.auth.signOut()
+    router.push('/login')
+    router.refresh()
+  }
 
   return (
     <div style={{ height: '100%', overflowY: 'auto', padding: '16px 14px 100px' }}>
-      <div style={{ fontSize: 18, fontWeight: 700, color: 'var(--text)', marginBottom: 16 }}>Configuration</div>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
+        <div style={{ fontSize: 18, fontWeight: 700, color: 'var(--text)' }}>Configuration</div>
+        <button onClick={handleLogout} style={{
+          padding: '6px 12px', borderRadius: 8, border: '1px solid var(--border)',
+          background: 'var(--surface-2)', color: 'var(--muted)', fontSize: 12, fontWeight: 600,
+          cursor: 'pointer', fontFamily: "'DM Sans', sans-serif",
+        }}>
+          Déconnexion
+        </button>
+      </div>
 
       {/* Tabs */}
       <div style={{ display: 'flex', borderBottom: '1px solid var(--border)', marginBottom: 16 }}>
