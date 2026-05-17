@@ -264,40 +264,6 @@ export default function BriefingsScreen({ interventions, zones, trades, companie
             ⛔ {cntBloque} tâche{cntBloque > 1 ? 's' : ''} bloquée{cntBloque > 1 ? 's' : ''} — action requise
           </div>
         )}
-
-        {/* Upcoming deadlines */}
-        {zones.filter(z => {
-          if (!z.deadline) return false
-          const d = new Date(z.deadline + 'T00:00:00')
-          const today = new Date(); today.setHours(0, 0, 0, 0)
-          const diff = Math.round((d.getTime() - today.getTime()) / 86400000)
-          return diff >= 0 && diff <= 14
-        }).length > 0 && (
-          <div style={{ margin: '0 14px 12px' }}>
-            <div style={{ fontSize: 9, fontWeight: 800, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '.07em', marginBottom: 6 }}>Échéances proches (≤ 14j)</div>
-            {zones.filter(z => {
-              if (!z.deadline) return false
-              const d = new Date(z.deadline + 'T00:00:00')
-              const today = new Date(); today.setHours(0, 0, 0, 0)
-              const diff = Math.round((d.getTime() - today.getTime()) / 86400000)
-              return diff >= 0 && diff <= 14
-            }).sort((a, b) => (a.deadline ?? '') < (b.deadline ?? '') ? -1 : 1).map(z => {
-              const d = new Date(z.deadline! + 'T00:00:00')
-              const today = new Date(); today.setHours(0, 0, 0, 0)
-              const diff = Math.round((d.getTime() - today.getTime()) / 86400000)
-              const fc = getZoneFloorColor(zones, z.floor)
-              return (
-                <div key={z.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '5px 8px', background: 'var(--surface-2)', borderRadius: 4, marginBottom: 4 }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                    <span style={{ width: 7, height: 7, borderRadius: '50%', background: fc, display: 'inline-block' }} />
-                    <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text)' }}>{z.short}</span>
-                  </div>
-                  <span style={{ fontSize: 11, fontWeight: 700, color: diff <= 3 ? '#DC2626' : '#EA580C' }}>J-{diff}</span>
-                </div>
-              )
-            })}
-          </div>
-        )}
       </div>
 
       {/* ── Week selector ── */}
