@@ -31,7 +31,7 @@ async function loadData() {
 }
 
 type Screen = 'dashboard' | 'planning' | 'list' | 'notes' | 'briefings' | 'settings'
-type CompanyScreen = 'mytasks' | 'planning'
+type CompanyScreen = 'mytasks' | 'planning' | 'notes'
 
 interface AppNotification {
   id: string
@@ -190,10 +190,17 @@ export default function PlanifyApp() {
               onUpdate={handleUpdate} onAdd={handleAdd}
             />
           )}
+          {coScreen === 'notes' && (
+            <NotesScreen
+              interventions={interventions} zones={zones} trades={trades} companies={companies}
+              authorName={authorName} userId={userId ?? undefined}
+              userRole={userRole} userCompany={userCompany}
+            />
+          )}
         </main>
-        {showNotifs && <NotifPanel notifications={notifications} onClose={() => setShowNotifs(false)} />}
+        {showNotifs && <NotifPanel notifications={notifications} onClose={() => setShowNotifs(false)} onNavigate={s => { setCoScreen(s === 'notes' ? 'notes' : s === 'planning' ? 'planning' : 'mytasks'); setShowNotifs(false) }} />}
         <nav style={{ background: 'var(--surface)', borderTop: '1px solid var(--border)', display: 'flex', flexShrink: 0 }}>
-          {([{ id: 'mytasks', label: 'Mes tâches', icon: '≡' }, { id: 'planning', label: 'Planning', icon: '▦' }] as { id: CompanyScreen; label: string; icon: string }[]).map(item => {
+          {([{ id: 'mytasks', label: 'Mes tâches', icon: '≡' }, { id: 'planning', label: 'Planning', icon: '▦' }, { id: 'notes', label: 'Notes', icon: '📝' }] as { id: CompanyScreen; label: string; icon: string }[]).map(item => {
             const active = coScreen === item.id
             return (
               <button key={item.id} onClick={() => setCoScreen(item.id)} style={{
@@ -224,7 +231,7 @@ export default function PlanifyApp() {
         {screen === 'briefings' && <BriefingsScreen interventions={interventions} zones={zones} trades={trades} companies={companies} />}
         {screen === 'settings' && <SettingsScreen zones={zones} trades={trades} companies={companies} onZonesChange={setZones} onTradesChange={setTrades} onCompaniesChange={setCompanies} />}
       </main>
-      {showNotifs && <NotifPanel notifications={notifications} onClose={() => setShowNotifs(false)} />}
+      {showNotifs && <NotifPanel notifications={notifications} onClose={() => setShowNotifs(false)} onNavigate={s => { setScreen(s); setShowNotifs(false) }} />}
       <BottomNav screen={screen} onNavigate={setScreen} notesUnread={notesUnread} />
     </div>
   )
@@ -255,7 +262,7 @@ function BellButton({ count, onClick }: { count: number; onClick: () => void }) 
 
 // ─── Notifications panel ──────────────────────────────────────────────────────
 
-function NotifPanel({ notifications, onClose }: { notifications: AppNotification[]; onClose: () => void }) {
+function NotifPanel({ notifications, onClose, onNavigate }: { notifications: AppNotification[]; onClose: () => void; onNavigate: (s: Screen) => void }) {
   function fmtTime(iso: string) {
     const d = new Date(iso)
     const now = new Date()
@@ -286,12 +293,15 @@ function NotifPanel({ notifications, onClose }: { notifications: AppNotification
           {notifications.length === 0 ? (
             <div style={{ textAlign: 'center', color: 'var(--muted)', fontSize: 13, padding: '32px 0' }}>Aucune notification</div>
           ) : notifications.map(n => (
-            <div key={n.id} style={{
-              padding: '11px 12px', marginBottom: 8, borderRadius: 'var(--r)',
-              background: n.read ? 'var(--surface-2)' : 'var(--primary-l)',
-              border: `1px solid ${n.read ? 'var(--border)' : 'var(--primary)'}`,
-              borderLeft: `3px solid ${n.read ? 'var(--border)' : 'var(--primary)'}`,
-            }}>
+            <div key={n.id}
+              onClick={() => onNavigate(n.message.startsWith('📢') ? 'notes' : 'list')}
+              style={{
+                padding: '11px 12px', marginBottom: 8, borderRadius: 'var(--r)',
+                background: n.read ? 'var(--surface-2)' : 'var(--primary-l)',
+                border: `1px solid ${n.read ? 'var(--border)' : 'var(--primary)'}`,
+                borderLeft: `3px solid ${n.read ? 'var(--border)' : 'var(--primary)'}`,
+                cursor: 'pointer',
+              }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 }}>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontSize: 13, fontWeight: n.read ? 400 : 600, color: 'var(--text)', lineHeight: 1.4 }}>{n.message}</div>

@@ -215,6 +215,8 @@ export default function NotesScreen({ interventions, zones, trades, companies, a
     const q = query.trim().toLowerCase()
     const weekStart = (() => { const d = new Date(); d.setDate(d.getDate() - 7); return d.toISOString() })()
     return topNotes.filter(n => {
+      // Archive: masquer les notes terminées sauf quand on filtre explicitement sur Terminé
+      if (statusFilt !== 'termine' && n.status === 'termine') return false
       // Quick view filter takes precedence
       if (quickView === 'mine'    && n.author_name !== authorName) return false
       if (quickView === 'unread'  && (n.read_by?.includes(userId ?? '') || n.author_name === authorName)) return false
@@ -367,32 +369,36 @@ export default function NotesScreen({ interventions, zones, trades, companies, a
 
         {/* Search + scope */}
         <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 8 }}>
-          <input
-            value={query}
-            onChange={e => setQuery(e.target.value)}
-            placeholder="Recherche…"
-            style={{
-              flex: 1, padding: '7px 10px', borderRadius: 8, border: '1px solid var(--border)',
-              background: 'var(--surface-2)', color: 'var(--text)', fontSize: 12,
-              fontFamily: "'DM Sans', sans-serif",
-            }}
-          />
-          <div style={{ display: 'flex', gap: 3 }}>
-            {SCOPES.map(s => (
-              <button key={s.value} onClick={() => setScopeFilt(s.value)} style={{
-                padding: '5px 9px', borderRadius: 999, fontSize: 10.5, fontWeight: 700, cursor: 'pointer',
-                border: `1px solid ${scopeFilt === s.value ? 'var(--primary)' : 'var(--border)'}`,
-                background: scopeFilt === s.value ? 'var(--primary-l)' : 'var(--surface-2)',
-                color: scopeFilt === s.value ? 'var(--primary)' : 'var(--muted)',
-              }}>{s.label}</button>
-            ))}
-          </div>
+          {userRole !== 'company' && (
+            <input
+              value={query}
+              onChange={e => setQuery(e.target.value)}
+              placeholder="Recherche…"
+              style={{
+                flex: 1, padding: '7px 10px', borderRadius: 8, border: '1px solid var(--border)',
+                background: 'var(--surface-2)', color: 'var(--text)', fontSize: 12,
+                fontFamily: "'DM Sans', sans-serif",
+              }}
+            />
+          )}
+          {userRole !== 'company' && (
+            <div style={{ display: 'flex', gap: 3 }}>
+              {SCOPES.map(s => (
+                <button key={s.value} onClick={() => setScopeFilt(s.value)} style={{
+                  padding: '5px 9px', borderRadius: 999, fontSize: 10.5, fontWeight: 700, cursor: 'pointer',
+                  border: `1px solid ${scopeFilt === s.value ? 'var(--primary)' : 'var(--border)'}`,
+                  background: scopeFilt === s.value ? 'var(--primary-l)' : 'var(--surface-2)',
+                  color: scopeFilt === s.value ? 'var(--primary)' : 'var(--muted)',
+                }}>{s.label}</button>
+              ))}
+            </div>
+          )}
         </div>
 
         {/* Status + category filters */}
         <div style={{ display: 'flex', gap: 5, alignItems: 'center', flexWrap: 'wrap' }}>
           <button onClick={() => setStatusFilt('all')} style={chipBtn(statusFilt === 'all')}>Tous statuts</button>
-          {STATUSES.map(s => (
+          {STATUSES.filter(s => s.value !== 'resolu').map(s => (
             <button key={s.value} onClick={() => setStatusFilt(s.value)} style={chipBtn(statusFilt === s.value, s.color, s.bg)}>
               <span style={{ width: 6, height: 6, borderRadius: '50%', background: s.color, display: 'inline-block', marginRight: 4 }} />
               {s.label}
@@ -683,7 +689,7 @@ export function NoteFormModal({ mode, iv, zones, trades, companies, authorName, 
   async function submit() {
     const trimmed = content.trim()
     if (trimmed.length > 5000) { setError('Le contenu est trop long (5000 caractères max).'); return }
-    if (!title.trim() && !trimmed) { setError('Un titre OU un contenu est requis.'); return }
+    if (!title.trim()) { setError('Le titre est requis.'); return }
     const hasAnchor = mode === 'intervention' || coCodes.length > 0 || trCodes.length > 0 || zoneIds.length > 0
     if (!hasAnchor) { setError('Au moins un ancrage (entreprise, métier ou zone) est requis.'); return }
 
@@ -810,7 +816,7 @@ export function NoteFormModal({ mode, iv, zones, trades, companies, authorName, 
         <div style={{ padding: '0 16px', display: 'flex', flexDirection: 'column', gap: 14, flex: 1, overflowY: 'auto', minHeight: 0 }}>
           {/* Title (optional) */}
           <div>
-            <label style={lbl}>Titre <span style={{ color: 'var(--xmuted)', fontWeight: 400 }}>(optionnel)</span></label>
+            <label style={lbl}>Titre <span style={{ color: 'var(--danger)' }}>*</span></label>
             <input style={inp} value={title} onChange={e => setTitle(e.target.value)} placeholder="ex. Demande de prise électrique sup." />
           </div>
 
@@ -1450,7 +1456,7 @@ function NoteDetail({ note, thread, zones, trades, companies, interventions, aut
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
                 <span style={{ fontSize: 11, color: 'var(--xmuted)' }}>👤 {note.author_name} · {timeAgo(note.created_at)}</span>
                 <div style={{ marginLeft: 'auto', display: 'flex', gap: 3, flexWrap: 'wrap' }}>
-                  {STATUSES.filter(s => s.value !== 'en_retard').map(s => (
+                  {STATUSES.filter(s => s.value !== 'en_retard' && s.value !== 'resolu').map(s => (
                     <button key={s.value} onClick={() => changeStatus(s.value)} style={{
                       ...chipBtn(status === s.value, s.color, s.bg),
                       padding: '4px 8px', fontSize: 10,
