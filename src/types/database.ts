@@ -129,4 +129,18 @@ export interface Note {
 
   parent_id:   string | null
   attachments: NoteAttachment[]
+
+  // v3
+  deleted_at?:          string | null
+  read_by?:             string[]
+  proof_url?:           string | null
+  proof_comment?:       string | null
+  mentioned_companies?: string[]
+}
+
+export interface CompanyNotifPrefs {
+  company_name:    string
+  email_digest:    boolean
+  email_immediate: boolean
+  updated_at?: string
 }

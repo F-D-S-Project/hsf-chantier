@@ -32,6 +32,20 @@ interface Props {
 
 export default function TaskDetail({ iv, zones, trades, companies = [], allInterventions, readOnly, authorName, onClose, onUpdate, onStartMove, onStartDuplicate }: Props) {
   const [showNoteForm, setShowNoteForm] = useState(false)
+  const [noteCount,    setNoteCount]    = useState<number | null>(null)
+
+  useEffect(() => {
+    supabase.from('notes').select('id', { count: 'exact', head: true }).eq('intervention_id', iv.id).is('deleted_at', null).then(({ count, error }) => {
+      if (error) {
+        // Fallback for v1 schema (no deleted_at column)
+        if ((error as { code?: string }).code === '42703') {
+          supabase.from('notes').select('id', { count: 'exact', head: true }).eq('intervention_id', iv.id).then(({ count: c2 }) => setNoteCount(c2 ?? 0))
+        }
+        return
+      }
+      setNoteCount(count ?? 0)
+    })
+  }, [iv.id])
   const [saving, setSaving]   = useState(false)
   const [editing, setEditing] = useState(false)
   const [status, setStatus]   = useState<Status>(iv.status as Status)
@@ -189,6 +203,28 @@ export default function TaskDetail({ iv, zones, trades, companies = [], allInter
           <div style={{ display: 'flex', flexDirection: 'column', gap: 4, flexShrink: 0 }}>
             <button onClick={onClose} style={{ border: 'none', background: 'var(--surface-2)', borderRadius: 8, width: 32, height: 32, cursor: 'pointer', fontSize: 18, color: 'var(--muted)' }}>×</button>
             {!readOnly && <button onClick={() => setEditing(e => !e)} style={{ border: `1px solid ${editing ? 'var(--primary)' : 'var(--border)'}`, background: editing ? 'var(--primary-l)' : 'var(--surface-2)', borderRadius: 8, width: 32, height: 32, cursor: 'pointer', fontSize: 13, color: editing ? 'var(--primary)' : 'var(--muted)' }}>✎</button>}
+            <button
+              onClick={() => setShowNoteForm(true)}
+              title={noteCount && noteCount > 0 ? `${noteCount} note${noteCount > 1 ? 's' : ''} sur cette tâche — cliquer pour ajouter` : 'Créer une note sur cette tâche'}
+              style={{
+                position: 'relative',
+                border: '1px solid #DDD6FE',
+                background: '#F5F3FF',
+                borderRadius: 8, width: 32, height: 32, cursor: 'pointer',
+                fontSize: 14, color: '#5B21B6',
+              }}
+            >
+              📝
+              {noteCount !== null && noteCount > 0 && (
+                <span style={{
+                  position: 'absolute', top: -5, right: -5,
+                  background: '#7C3AED', color: '#fff', borderRadius: 99,
+                  fontSize: 9, fontWeight: 800, minWidth: 16, height: 16,
+                  display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 3px',
+                  border: '1.5px solid var(--surface)',
+                }}>{noteCount > 9 ? '9+' : noteCount}</span>
+              )}
+            </button>
           </div>
         </div>
 
@@ -417,12 +453,6 @@ export default function TaskDetail({ iv, zones, trades, companies = [], allInter
               )}
             </div>
           )}
-          <button onClick={() => setShowNoteForm(true)} style={{
-            padding: '9px 0', borderRadius: 'var(--r-sm)', border: '1px solid #7C3AED',
-            background: '#F5F3FF', color: '#5B21B6', fontSize: 13, fontWeight: 600, cursor: 'pointer',
-          }}>
-            📝 Créer une note sur cette tâche
-          </button>
           {readOnly ? (
             <button onClick={onClose} style={{ padding: '11px 0', borderRadius: 'var(--r-sm)', border: '1px solid var(--border)', background: 'var(--surface-2)', color: 'var(--muted)', fontSize: 14, fontWeight: 600, cursor: 'pointer' }}>
               Fermer

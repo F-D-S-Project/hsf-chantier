@@ -1,8 +1,8 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { supabase } from '@/lib/supabase'
-import type { Note, NoteScope, NoteStatus, NoteCategory, Intervention, Zone, Trade, Company } from '@/types/database'
+import type { Note, NoteScope, NoteStatus, NoteCategory, NoteAttachment, Intervention, Zone, Trade, Company } from '@/types/database'
 
 // ─── Constants ──────────────────────────────────────────────────────────────
 
@@ -79,11 +79,12 @@ interface Props {
   trades: Trade[]
   companies: Company[]
   authorName: string
+  userId?: string
   userRole?: 'admin' | 'company'
   userCompany?: string
 }
 
-export default function NotesScreen({ interventions, zones, trades, companies, authorName, userRole, userCompany }: Props) {
+export default function NotesScreen({ interventions, zones, trades, companies, authorName, userId, userRole, userCompany }: Props) {
   const [notes,     setNotes]     = useState<Note[]>([])
   const [loading,   setLoading]   = useState(true)
   const [loadError, setLoadError] = useState<{ code?: string; message: string } | null>(null)
@@ -99,6 +100,7 @@ export default function NotesScreen({ interventions, zones, trades, companies, a
   const [toast,        setToast]        = useState<{ msg: string; kind: 'success' | 'error' } | null>(null)
   const [fabOpen,      setFabOpen]      = useState(false)
   const [showIvPicker, setShowIvPicker] = useState(false)
+  const [quickView,    setQuickView]    = useState<'all' | 'mine' | 'unread' | 'late' | 'thisweek'>('all')
 
   function showToast(msg: string, kind: 'success' | 'error' = 'success') {
     setToast({ msg, kind })
@@ -108,9 +110,20 @@ export default function NotesScreen({ interventions, zones, trades, companies, a
   // Load + realtime
   useEffect(() => {
     let mounted = true
-    supabase.from('notes').select('*').order('updated_at', { ascending: false }).then(({ data, error }) => {
+    supabase.from('notes').select('*').is('deleted_at', null).order('updated_at', { ascending: false }).then(({ data, error }) => {
       if (!mounted) return
       if (error) {
+        // Fallback for v1 schema without deleted_at column
+        if ((error as { code?: string }).code === '42703') {
+          supabase.from('notes').select('*').order('updated_at', { ascending: false }).then(({ data: d2, error: e2 }) => {
+            if (!mounted) return
+            if (e2) setLoadError({ code: (e2 as { code?: string }).code, message: e2.message })
+            else setLoadError(null)
+            setNotes((d2 ?? []) as Note[])
+            setLoading(false)
+          })
+          return
+        }
         console.error('notes load', error)
         setLoadError({ code: (error as { code?: string }).code, message: error.message })
       } else {
@@ -145,7 +158,14 @@ export default function NotesScreen({ interventions, zones, trades, companies, a
   // Filter
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase()
+    const weekStart = (() => { const d = new Date(); d.setDate(d.getDate() - 7); return d.toISOString() })()
     return topNotes.filter(n => {
+      // Quick view filter takes precedence
+      if (quickView === 'mine'    && n.author_name !== authorName) return false
+      if (quickView === 'unread'  && (n.read_by?.includes(userId ?? '') || n.author_name === authorName)) return false
+      if (quickView === 'late'    && !isLate(n)) return false
+      if (quickView === 'thisweek'&& (n.updated_at ?? n.created_at) < weekStart) return false
+
       if (scopeFilt !== 'all' && n.scope !== scopeFilt) return false
       if (statusFilt !== 'all' && n.status !== statusFilt) return false
       if (catFilt !== 'all'    && n.category !== catFilt) return false
@@ -170,7 +190,7 @@ export default function NotesScreen({ interventions, zones, trades, companies, a
       if (aLate !== bLate) return aLate ? -1 : 1
       return (b.updated_at ?? '').localeCompare(a.updated_at ?? '')
     })
-  }, [topNotes, scopeFilt, statusFilt, catFilt, coFilt, trFilt, zoneFilt, query, userRole, userCompany])
+  }, [topNotes, scopeFilt, statusFilt, catFilt, coFilt, trFilt, zoneFilt, query, userRole, userCompany, quickView, authorName, userId, interventions, companies])
 
   const selectedNote = selected ? notes.find(n => n.id === selected) ?? null : null
   const selectedThread = selectedNote ? notes.filter(n => n.parent_id === selectedNote.id).sort((a, b) => a.created_at.localeCompare(b.created_at)) : []
@@ -213,6 +233,34 @@ export default function NotesScreen({ interventions, zones, trades, companies, a
               </div>
             </>
           )}
+        </div>
+
+        {/* Quick views */}
+        <div style={{ display: 'flex', gap: 5, marginBottom: 8, flexWrap: 'wrap' }}>
+          {([
+            { v: 'all',      label: 'Tout',            count: topNotes.length, color: '#2152C8' },
+            { v: 'mine',     label: 'Mes notes',       count: topNotes.filter(n => n.author_name === authorName).length, color: '#7C3AED' },
+            { v: 'unread',   label: 'Non lues',        count: topNotes.filter(n => !n.read_by?.includes(userId ?? '') && n.author_name !== authorName).length, color: '#2152C8' },
+            { v: 'late',     label: 'En retard',       count: topNotes.filter(isLate).length, color: '#DC2626' },
+            { v: 'thisweek', label: '7 derniers jours', count: topNotes.filter(n => (n.updated_at ?? n.created_at) >= new Date(Date.now() - 7 * 86400000).toISOString()).length, color: '#0891B2' },
+          ] as const).map(v => {
+            const active = quickView === v.v
+            return (
+              <button key={v.v} onClick={() => setQuickView(v.v)} style={{
+                padding: '5px 10px', borderRadius: 999, fontSize: 11, fontWeight: 700, cursor: 'pointer',
+                border: `1.5px solid ${active ? v.color : 'var(--border)'}`,
+                background: active ? v.color + '12' : 'var(--surface-2)',
+                color: active ? v.color : 'var(--muted)',
+                display: 'inline-flex', alignItems: 'center', gap: 5,
+              }}>
+                {v.label}
+                <span style={{
+                  background: active ? v.color : 'var(--border)', color: '#fff',
+                  borderRadius: 99, padding: '0 6px', fontSize: 9.5, fontWeight: 800, lineHeight: 1.6,
+                }}>{v.count}</span>
+              </button>
+            )
+          })}
         </div>
 
         {/* Search + scope */}
@@ -332,7 +380,9 @@ export default function NotesScreen({ interventions, zones, trades, companies, a
           companies={companies}
           interventions={interventions}
           authorName={authorName}
+          userId={userId}
           onClose={() => setSelected(null)}
+          onToast={showToast}
         />
       )}
     </div>
@@ -686,45 +736,135 @@ function MultiPick({ options, selected, onChange, placeholder }: {
 
 // ─── Detail panel (note + thread) ───────────────────────────────────────────
 
-function NoteDetail({ note, thread, zones, trades, companies, interventions, authorName, onClose }: {
+function NoteDetail({ note, thread, zones, trades, companies, interventions, authorName, userId, onClose, onToast }: {
   note: Note; thread: Note[]
   zones: Zone[]; trades: Trade[]; companies: Company[]; interventions: Intervention[]
   authorName: string
+  userId?: string
   onClose: () => void
+  onToast: (msg: string, kind?: 'success' | 'error') => void
 }) {
-  const [reply,  setReply]  = useState('')
-  const [saving, setSaving] = useState(false)
-  const [status, setStatus] = useState<NoteStatus>(note.status)
-  const cat   = catMeta(note.category)
-  const stat  = statusMeta(status)
-  const due   = fmtDue(note.due_date)
+  const [reply,         setReply]         = useState('')
+  const [saving,        setSaving]        = useState(false)
+  const [status,        setStatus]        = useState<NoteStatus>(note.status)
+  const [editing,       setEditing]       = useState(false)
+  const [editTitle,     setEditTitle]     = useState(note.title ?? '')
+  const [editContent,   setEditContent]   = useState(note.content)
+  const [editDue,       setEditDue]       = useState(note.due_date ?? '')
+  const [confirmDelete, setConfirmDelete] = useState(false)
+  const [pendingProof,  setPendingProof]  = useState(false)
+  const [attachments,   setAttachments]   = useState<NoteAttachment[]>(note.attachments ?? [])
+  const [uploading,     setUploading]     = useState(false)
+  const fileInputRef = useRef<HTMLInputElement>(null)
+
+  const cat    = catMeta(note.category)
+  const stat   = statusMeta(status === note.status ? effectiveNoteStatus({ ...note, status }) : status)
+  const due    = fmtDue(note.due_date)
   const ivLink = note.intervention_id ? interventions.find(i => i.id === note.intervention_id) : null
+  const isAuthor = !!userId && note.author_id === userId || note.author_name === authorName
+
+  // Mark as read on open
+  useEffect(() => {
+    if (!userId) return
+    if (note.read_by?.includes(userId)) return
+    supabase.from('notes').update({ read_by: [...(note.read_by ?? []), userId] }).eq('id', note.id).then(({ error }) => {
+      if (error && (error as { code?: string }).code !== '42703') {
+        console.warn('mark as read failed', error)
+      }
+    })
+  }, [note.id, userId, note.read_by])
 
   async function postReply() {
-    if (!reply.trim()) return
+    const txt = reply.trim()
+    if (txt.length < 1) return
     setSaving(true)
     const payload = {
       author_name: authorName,
-      content: reply.trim(),
-      parent_id: note.id,
+      author_id:   userId ?? null,
+      content:     txt,
+      parent_id:   note.id,
       scope: 'libre' as NoteScope,
       intervention_id: note.intervention_id,
-      zone_ids: [],
-      company_codes: [],
-      trade_codes: [],
-      attachments: [],
+      zone_ids: [], company_codes: [], trade_codes: [], attachments: [],
     }
     const { error: err } = await supabase.from('notes').insert([payload])
     setSaving(false)
-    if (err) { alert(err.message); return }
+    if (err) { onToast(err.message, 'error'); return }
     setReply('')
-    // Bump parent updated_at for sort
     await supabase.from('notes').update({ updated_at: new Date().toISOString() }).eq('id', note.id)
   }
 
   async function changeStatus(newStatus: NoteStatus) {
+    if (newStatus === 'en_retard') {
+      onToast('« En retard » est automatique selon l’échéance.', 'error')
+      return
+    }
+    // Force preuve obligatoire pour passer à Résolu
+    if (newStatus === 'resolu' && status !== 'resolu') {
+      setPendingProof(true)
+      return
+    }
     setStatus(newStatus)
-    await supabase.from('notes').update({ status: newStatus }).eq('id', note.id)
+    const { error: err } = await supabase.from('notes').update({ status: newStatus }).eq('id', note.id)
+    if (err) { onToast(err.message, 'error'); setStatus(note.status); return }
+    onToast(`Statut → ${statusMeta(newStatus).label}`, 'success')
+  }
+
+  async function saveEdit() {
+    const trimmed = editContent.trim()
+    if (trimmed.length < 3)    { onToast('Contenu trop court (min 3 caractères).', 'error'); return }
+    if (trimmed.length > 5000) { onToast('Contenu trop long (5000 caractères max).', 'error'); return }
+    setSaving(true)
+    const patch = { title: editTitle.trim() || null, content: trimmed, due_date: editDue || null }
+    const { error: err } = await supabase.from('notes').update(patch).eq('id', note.id)
+    setSaving(false)
+    if (err) { onToast(err.message, 'error'); return }
+    setEditing(false)
+    onToast('Note mise à jour ✓', 'success')
+  }
+
+  async function softDelete() {
+    setSaving(true)
+    const { error: err } = await supabase.from('notes').update({ deleted_at: new Date().toISOString() }).eq('id', note.id)
+    setSaving(false)
+    if (err) {
+      if ((err as { code?: string }).code === '42703') {
+        onToast('Migration v3 manquante : lance notes_v3_features.sql.', 'error')
+      } else onToast(err.message, 'error')
+      return
+    }
+    onToast('Note supprimée', 'success')
+    onClose()
+  }
+
+  async function handleFile(file: File) {
+    if (file.size > 10 * 1024 * 1024) { onToast('Fichier > 10 Mo refusé.', 'error'); return }
+    const allowed = ['image/jpeg', 'image/png', 'application/pdf']
+    if (!allowed.includes(file.type)) { onToast('Format refusé (JPG/PNG/PDF uniquement).', 'error'); return }
+    setUploading(true)
+    const path = `${note.id}/${Date.now()}-${file.name.replace(/[^a-zA-Z0-9._-]/g, '_')}`
+    const { error: upErr } = await supabase.storage.from('notes-attachments').upload(path, file)
+    if (upErr) {
+      setUploading(false)
+      if (upErr.message?.toLowerCase().includes('bucket')) {
+        onToast('Bucket « notes-attachments » à créer dans Supabase Storage.', 'error')
+      } else onToast(upErr.message, 'error')
+      return
+    }
+    const { data: { publicUrl } } = supabase.storage.from('notes-attachments').getPublicUrl(path)
+    const next = [...attachments, { url: publicUrl, name: file.name, type: file.type, size: file.size }]
+    const { error: updErr } = await supabase.from('notes').update({ attachments: next }).eq('id', note.id)
+    setUploading(false)
+    if (updErr) { onToast(updErr.message, 'error'); return }
+    setAttachments(next)
+    onToast('Pièce jointe ajoutée ✓', 'success')
+  }
+
+  async function removeAttachment(idx: number) {
+    const next = attachments.filter((_, i) => i !== idx)
+    const { error: err } = await supabase.from('notes').update({ attachments: next }).eq('id', note.id)
+    if (err) { onToast(err.message, 'error'); return }
+    setAttachments(next)
   }
 
   return (
@@ -743,39 +883,100 @@ function NoteDetail({ note, thread, zones, trades, companies, interventions, aut
               background: cat.color + '15', textTransform: 'uppercase', letterSpacing: '.04em',
             }}>{cat.icon} {cat.label}</span>
             <span style={{ fontSize: 11, color: 'var(--xmuted)' }}>{note.scope === 'intervention' ? '📅 Liée au planning' : '📌 Libre'}</span>
-            <button onClick={onClose} style={{
-              marginLeft: 'auto', width: 28, height: 28, borderRadius: 6, border: '1px solid var(--border)',
-              background: 'var(--surface-2)', cursor: 'pointer', fontSize: 14,
-            }}>✕</button>
-          </div>
-          {note.title && <div style={{ fontSize: 16, fontWeight: 800, color: 'var(--text)', marginBottom: 4 }}>{note.title}</div>}
-          <div style={{ fontSize: 13, color: 'var(--text)', lineHeight: 1.45, whiteSpace: 'pre-wrap', marginBottom: 8 }}>{note.content}</div>
-
-          {/* Anchors */}
-          <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap', marginBottom: 8 }}>
-            {note.company_codes.length > 0 && <span style={anchorStyle}>🏢 {note.company_codes.join(', ')}</span>}
-            {note.trade_codes.length > 0 && <span style={anchorStyle}>📐 {note.trade_codes.map(t => trades.find(x => x.id === t)?.name ?? t).join(', ')}</span>}
-            {note.zone_ids.length > 0 && <span style={anchorStyle}>📍 {note.zone_ids.map(z => zones.find(x => x.id === z)?.short ?? z).join(', ')}</span>}
-            {ivLink && <span style={anchorStyle}>🔗 {ivLink.task_number || ivLink.task?.slice(0, 30)}</span>}
-            {due && <span style={{ ...anchorStyle, color: due.late ? '#DC2626' : undefined, background: due.late ? 'rgba(220,38,38,.10)' : undefined }}>⏰ {due.txt}</span>}
+            <span style={{ marginLeft: 'auto', display: 'flex', gap: 4 }}>
+              {!editing && isAuthor && (
+                <>
+                  <button onClick={() => setEditing(true)} title="Éditer" style={iconBtnStyle}>✎</button>
+                  <button onClick={() => setConfirmDelete(true)} title="Supprimer" style={{ ...iconBtnStyle, color: '#DC2626' }}>🗑</button>
+                </>
+              )}
+              <button onClick={onClose} style={iconBtnStyle}>✕</button>
+            </span>
           </div>
 
-          {/* Author + status changer */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <span style={{ fontSize: 11, color: 'var(--xmuted)' }}>👤 {note.author_name} · {timeAgo(note.created_at)}</span>
-            <div style={{ marginLeft: 'auto', display: 'flex', gap: 3 }}>
-              {STATUSES.map(s => (
-                <button key={s.value} onClick={() => changeStatus(s.value)} style={{
-                  ...chipBtn(status === s.value, s.color, s.bg),
-                  padding: '4px 8px', fontSize: 10,
-                }}>{s.label}</button>
+          {editing ? (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              <input style={inp} value={editTitle} onChange={e => setEditTitle(e.target.value)} placeholder="Titre (optionnel)" />
+              <textarea style={{ ...inp, resize: 'vertical', fontFamily: 'inherit', minHeight: 90 }} value={editContent} onChange={e => setEditContent(e.target.value)} />
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <label style={{ fontSize: 11, color: 'var(--muted)', fontWeight: 700 }}>Échéance :</label>
+                <input type="date" style={{ ...inp, width: 'auto' }} value={editDue} onChange={e => setEditDue(e.target.value)} />
+              </div>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button onClick={() => { setEditing(false); setEditTitle(note.title ?? ''); setEditContent(note.content); setEditDue(note.due_date ?? '') }} style={{ flex: 1, padding: '9px 0', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface-2)', color: 'var(--muted)', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>Annuler</button>
+                <button onClick={saveEdit} disabled={saving} style={{ flex: 2, padding: '9px 0', borderRadius: 8, border: 'none', background: 'var(--primary)', color: '#fff', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}>{saving ? 'Enregistrement…' : 'Enregistrer'}</button>
+              </div>
+            </div>
+          ) : (
+            <>
+              {note.title && <div style={{ fontSize: 16, fontWeight: 800, color: 'var(--text)', marginBottom: 4 }}>{note.title}</div>}
+              <div style={{ fontSize: 13, color: 'var(--text)', lineHeight: 1.45, whiteSpace: 'pre-wrap', marginBottom: 8 }}>{note.content}</div>
+
+              {/* Anchors */}
+              <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap', marginBottom: 8 }}>
+                {note.company_codes.length > 0 && <span style={anchorStyle}>🏢 {note.company_codes.join(', ')}</span>}
+                {note.trade_codes.length > 0 && <span style={anchorStyle}>📐 {note.trade_codes.map(t => trades.find(x => x.id === t)?.name ?? t).join(', ')}</span>}
+                {note.zone_ids.length > 0 && <span style={anchorStyle}>📍 {note.zone_ids.map(z => zones.find(x => x.id === z)?.short ?? z).join(', ')}</span>}
+                {ivLink && <span style={anchorStyle}>🔗 {ivLink.task_number || ivLink.task?.slice(0, 30)}</span>}
+                {due && <span style={{ ...anchorStyle, color: due.late ? '#DC2626' : undefined, background: due.late ? 'rgba(220,38,38,.10)' : undefined }}>⏰ {due.txt}</span>}
+              </div>
+
+              {/* Author + status changer */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                <span style={{ fontSize: 11, color: 'var(--xmuted)' }}>👤 {note.author_name} · {timeAgo(note.created_at)}</span>
+                <div style={{ marginLeft: 'auto', display: 'flex', gap: 3, flexWrap: 'wrap' }}>
+                  {STATUSES.filter(s => s.value !== 'en_retard').map(s => (
+                    <button key={s.value} onClick={() => changeStatus(s.value)} style={{
+                      ...chipBtn(status === s.value, s.color, s.bg),
+                      padding: '4px 8px', fontSize: 10,
+                    }}>{s.label}</button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Proof preview (when resolved) */}
+              {status === 'resolu' && (note.proof_url || note.proof_comment) && (
+                <div style={{ marginTop: 8, padding: 8, background: '#DCFCE7', borderRadius: 6, border: '1px solid #86EFAC' }}>
+                  <div style={{ fontSize: 10.5, fontWeight: 800, color: '#15803D', marginBottom: 3 }}>✓ Résolution prouvée</div>
+                  {note.proof_comment && <div style={{ fontSize: 11.5, color: '#14532D' }}>{note.proof_comment}</div>}
+                  {note.proof_url && (
+                    <a href={note.proof_url} target="_blank" rel="noreferrer" style={{ fontSize: 11, color: '#15803D', fontWeight: 700, marginTop: 4, display: 'inline-block' }}>📎 Voir le fichier</a>
+                  )}
+                </div>
+              )}
+            </>
+          )}
+        </div>
+
+        {/* Attachments */}
+        <div style={{ padding: '10px 16px', borderBottom: '1px solid var(--border)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+            <span style={{ fontSize: 10.5, fontWeight: 800, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '.06em' }}>
+              📎 Pièces jointes {attachments.length > 0 && `(${attachments.length})`}
+            </span>
+            <button onClick={() => fileInputRef.current?.click()} disabled={uploading} style={{
+              padding: '4px 10px', borderRadius: 6, border: '1.5px dashed var(--primary)', background: 'transparent',
+              color: 'var(--primary)', fontSize: 11, fontWeight: 700, cursor: uploading ? 'default' : 'pointer',
+            }}>{uploading ? 'Upload…' : '+ Ajouter'}</button>
+            <input
+              ref={fileInputRef} type="file" hidden
+              accept="image/jpeg,image/png,application/pdf"
+              onChange={e => { const f = e.target.files?.[0]; if (f) { handleFile(f); e.target.value = '' } }}
+            />
+          </div>
+          {attachments.length === 0 ? (
+            <div style={{ fontSize: 11, color: 'var(--xmuted)', textAlign: 'center', padding: '4px 0' }}>Aucune pièce jointe</div>
+          ) : (
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+              {attachments.map((a, i) => (
+                <AttachmentChip key={i} att={a} onRemove={isAuthor ? () => removeAttachment(i) : undefined} />
               ))}
             </div>
-          </div>
+          )}
         </div>
 
         {/* Thread */}
-        <div style={{ flex: 1, overflowY: 'auto', padding: '12px 16px', minHeight: 100, maxHeight: '40vh' }}>
+        <div style={{ flex: 1, overflowY: 'auto', padding: '12px 16px', minHeight: 80, maxHeight: '32vh' }}>
           {thread.length === 0 ? (
             <div style={{ textAlign: 'center', color: 'var(--xmuted)', fontSize: 11, padding: '12px 0' }}>Aucune réponse pour l’instant.</div>
           ) : thread.map(r => (
@@ -803,8 +1004,170 @@ function NoteDetail({ note, thread, zones, trades, companies, interventions, aut
           }}>Envoyer</button>
         </div>
       </div>
+
+      {/* Confirm delete */}
+      {confirmDelete && (
+        <ConfirmDialog
+          title="Supprimer cette note ?"
+          message="La note sera masquée. Elle restera consultable dans la base 30 jours pour permettre une restauration manuelle."
+          confirmLabel="Supprimer"
+          danger
+          onConfirm={() => { setConfirmDelete(false); softDelete() }}
+          onCancel={() => setConfirmDelete(false)}
+        />
+      )}
+
+      {/* Proof modal for resolution */}
+      {pendingProof && (
+        <ProofModal
+          onCancel={() => setPendingProof(false)}
+          onConfirm={async (proofUrl, proofComment) => {
+            setStatus('resolu')
+            const { error: err } = await supabase.from('notes').update({ status: 'resolu', proof_url: proofUrl, proof_comment: proofComment }).eq('id', note.id)
+            if (err) { onToast(err.message, 'error'); setStatus(note.status); setPendingProof(false); return }
+            onToast('Note résolue ✓', 'success')
+            setPendingProof(false)
+          }}
+          noteId={note.id}
+          onToast={onToast}
+        />
+      )}
     </>
   )
+}
+
+// ─── Attachment chip ────────────────────────────────────────────────────────
+
+function AttachmentChip({ att, onRemove }: { att: NoteAttachment; onRemove?: () => void }) {
+  const isImg = att.type.startsWith('image/')
+  return (
+    <div style={{ position: 'relative', display: 'inline-block' }}>
+      <a href={att.url} target="_blank" rel="noreferrer" style={{
+        display: 'flex', alignItems: 'center', gap: 6, padding: '5px 8px',
+        background: 'var(--surface-2)', border: '1px solid var(--border)',
+        borderRadius: 6, textDecoration: 'none', color: 'var(--text)',
+        fontSize: 11, fontWeight: 600, maxWidth: 200,
+      }}>
+        {isImg ? (
+          <img src={att.url} alt="" style={{ width: 24, height: 24, objectFit: 'cover', borderRadius: 3, flexShrink: 0 }} />
+        ) : (
+          <span style={{ fontSize: 16 }}>📄</span>
+        )}
+        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{att.name}</span>
+      </a>
+      {onRemove && (
+        <button onClick={e => { e.preventDefault(); e.stopPropagation(); onRemove() }} style={{
+          position: 'absolute', top: -5, right: -5, width: 16, height: 16, borderRadius: '50%',
+          background: '#DC2626', color: '#fff', border: 'none', cursor: 'pointer',
+          fontSize: 10, fontWeight: 700, lineHeight: 1, display: 'flex', alignItems: 'center', justifyContent: 'center',
+        }} title="Retirer">×</button>
+      )}
+    </div>
+  )
+}
+
+// ─── Confirm dialog ─────────────────────────────────────────────────────────
+
+function ConfirmDialog({ title, message, confirmLabel, danger, onConfirm, onCancel }: {
+  title: string; message: string; confirmLabel: string; danger?: boolean
+  onConfirm: () => void; onCancel: () => void
+}) {
+  return (
+    <>
+      <div onClick={onCancel} style={{ ...modalBackdrop, zIndex: 150 }} />
+      <div style={{
+        position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%, -50%)',
+        background: 'var(--surface)', borderRadius: 12, padding: '18px 20px', maxWidth: 360, width: '90%',
+        boxShadow: '0 10px 40px rgba(0,0,0,.25)', zIndex: 151,
+      }}>
+        <div style={{ fontSize: 15, fontWeight: 800, color: 'var(--text)', marginBottom: 6 }}>{title}</div>
+        <div style={{ fontSize: 12.5, color: 'var(--muted)', marginBottom: 16, lineHeight: 1.45 }}>{message}</div>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button onClick={onCancel} style={{ flex: 1, padding: '9px 0', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface-2)', color: 'var(--muted)', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>Annuler</button>
+          <button onClick={onConfirm} style={{
+            flex: 1, padding: '9px 0', borderRadius: 8, border: 'none',
+            background: danger ? '#DC2626' : 'var(--primary)', color: '#fff', fontSize: 12, fontWeight: 700, cursor: 'pointer',
+          }}>{confirmLabel}</button>
+        </div>
+      </div>
+    </>
+  )
+}
+
+// ─── Proof modal (when marking note as resolved) ───────────────────────────
+
+function ProofModal({ noteId, onCancel, onConfirm, onToast }: {
+  noteId: string
+  onCancel: () => void
+  onConfirm: (proofUrl: string | null, proofComment: string | null) => void
+  onToast: (msg: string, kind?: 'success' | 'error') => void
+}) {
+  const [comment, setComment] = useState('')
+  const [file,    setFile]    = useState<File | null>(null)
+  const [busy,    setBusy]    = useState(false)
+
+  async function submit() {
+    if (!comment.trim() && !file) {
+      onToast('Photo OU commentaire de preuve obligatoire.', 'error')
+      return
+    }
+    setBusy(true)
+    let proofUrl: string | null = null
+    if (file) {
+      const path = `${noteId}/proof-${Date.now()}-${file.name.replace(/[^a-zA-Z0-9._-]/g, '_')}`
+      const { error: upErr } = await supabase.storage.from('notes-attachments').upload(path, file)
+      if (upErr) {
+        setBusy(false)
+        onToast(upErr.message?.toLowerCase().includes('bucket') ? 'Bucket « notes-attachments » à créer.' : upErr.message, 'error')
+        return
+      }
+      proofUrl = supabase.storage.from('notes-attachments').getPublicUrl(path).data.publicUrl
+    }
+    onConfirm(proofUrl, comment.trim() || null)
+  }
+
+  return (
+    <>
+      <div onClick={onCancel} style={{ ...modalBackdrop, zIndex: 150 }} />
+      <div style={{
+        position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%, -50%)',
+        background: 'var(--surface)', borderRadius: 12, padding: '18px 20px', maxWidth: 400, width: '92%',
+        boxShadow: '0 10px 40px rgba(0,0,0,.25)', zIndex: 151,
+      }}>
+        <div style={{ fontSize: 15, fontWeight: 800, color: 'var(--text)', marginBottom: 4 }}>✓ Marquer comme résolu</div>
+        <div style={{ fontSize: 11.5, color: 'var(--muted)', marginBottom: 14, lineHeight: 1.4 }}>
+          Pour passer à « Résolu », fournis <strong>une photo</strong> et/ou <strong>un commentaire</strong> de preuve.
+        </div>
+        <label style={lbl}>Commentaire de preuve</label>
+        <textarea
+          value={comment} onChange={e => setComment(e.target.value)}
+          rows={3} autoFocus
+          placeholder="Ce qui a été fait, par qui, quand…"
+          style={{ ...inp, marginBottom: 10, resize: 'vertical', fontFamily: 'inherit' }}
+        />
+        <label style={lbl}>Photo / fichier (optionnel)</label>
+        <input
+          type="file" accept="image/jpeg,image/png,application/pdf"
+          onChange={e => setFile(e.target.files?.[0] ?? null)}
+          style={{ marginBottom: 14, fontSize: 12 }}
+        />
+        {file && <div style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 8 }}>📎 {file.name}</div>}
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button onClick={onCancel} style={{ flex: 1, padding: '9px 0', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface-2)', color: 'var(--muted)', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>Annuler</button>
+          <button onClick={submit} disabled={busy} style={{
+            flex: 2, padding: '9px 0', borderRadius: 8, border: 'none',
+            background: busy ? 'var(--border)' : '#15803D', color: '#fff', fontSize: 12, fontWeight: 700, cursor: busy ? 'default' : 'pointer',
+          }}>{busy ? 'Enregistrement…' : 'Valider la résolution'}</button>
+        </div>
+      </div>
+    </>
+  )
+}
+
+const iconBtnStyle: React.CSSProperties = {
+  width: 28, height: 28, borderRadius: 6, border: '1px solid var(--border)',
+  background: 'var(--surface-2)', cursor: 'pointer', fontSize: 13,
+  display: 'flex', alignItems: 'center', justifyContent: 'center',
 }
 
 // ─── Intervention picker (anchored note creation) ──────────────────────────

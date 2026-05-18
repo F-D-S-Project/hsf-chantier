@@ -56,9 +56,11 @@ export default function PlanifyApp() {
   const [companies, setCompanies]           = useState<Company[]>([])
   const [userRole, setUserRole]             = useState<'admin' | 'company'>('admin')
   const [userCompany, setUserCompany]       = useState<string | null>(null)
+  const [userId, setUserId]                 = useState<string | null>(null)
   const [authorName, setAuthorName]         = useState<string>('Admin')
   const [notifications, setNotifications]   = useState<AppNotification[]>([])
   const [showNotifs, setShowNotifs]         = useState(false)
+  const [notesUnread, setNotesUnread]       = useState(0)
 
   useEffect(() => {
     Promise.all([
@@ -70,6 +72,7 @@ export default function PlanifyApp() {
       const role = user?.user_metadata?.role ?? 'admin'
       const co   = user?.user_metadata?.company_name ?? null
       setUserRole(role); setUserCompany(co)
+      setUserId(user?.id ?? null)
       setAuthorName(co ?? user?.email?.split('@')[0] ?? 'Admin')
     })
     .catch(e => setError(String(e)))
@@ -99,6 +102,28 @@ export default function PlanifyApp() {
       .subscribe()
     return () => { supabase.removeChannel(channel) }
   }, [loading, userRole, userCompany])
+
+  // Notes unread count (realtime)
+  useEffect(() => {
+    if (loading || !userId) return
+    async function refreshUnread() {
+      const { data, error } = await supabase.from('notes').select('id, read_by, author_name').is('deleted_at', null).is('parent_id', null)
+      if (error) {
+        if ((error as { code?: string }).code === '42703') {
+          // v1 schema fallback
+          const { data: d2 } = await supabase.from('notes').select('id, read_by, author_name').is('parent_id', null)
+          if (d2) setNotesUnread(d2.filter(n => !(n.read_by ?? []).includes(userId) && n.author_name !== authorName).length)
+        }
+        return
+      }
+      setNotesUnread((data ?? []).filter(n => !(n.read_by ?? []).includes(userId) && n.author_name !== authorName).length)
+    }
+    refreshUnread()
+    const ch = supabase.channel('notes-unread-' + Date.now())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'notes' }, () => refreshUnread())
+      .subscribe()
+    return () => { supabase.removeChannel(ch) }
+  }, [loading, userId, authorName])
 
   const handleUpdate = useCallback((id: string, patch: Partial<Intervention>) => {
     setInterventions(prev => prev.map(iv => iv.id === id ? { ...iv, ...patch } : iv))
@@ -195,12 +220,12 @@ export default function PlanifyApp() {
         {screen === 'dashboard' && <DashboardScreen zones={zones} interventions={interventions} trades={trades} companies={companies} authorName={authorName} onUpdate={handleUpdate} />}
         {screen === 'list' && <ListScreen interventions={interventions} zones={zones} trades={trades} onUpdate={handleUpdate} />}
         {screen === 'planning' && <PlanningScreen interventions={interventions} zones={zones} trades={trades} companies={companies} onUpdate={handleUpdate} onAdd={handleAdd} />}
-        {screen === 'notes' && <NotesScreen interventions={interventions} zones={zones} trades={trades} companies={companies} authorName={authorName} userRole={userRole} userCompany={userCompany ?? undefined} />}
+        {screen === 'notes' && <NotesScreen interventions={interventions} zones={zones} trades={trades} companies={companies} authorName={authorName} userId={userId ?? undefined} userRole={userRole} userCompany={userCompany ?? undefined} />}
         {screen === 'briefings' && <BriefingsScreen interventions={interventions} zones={zones} trades={trades} companies={companies} />}
         {screen === 'settings' && <SettingsScreen zones={zones} trades={trades} companies={companies} onZonesChange={setZones} onTradesChange={setTrades} onCompaniesChange={setCompanies} />}
       </main>
       {showNotifs && <NotifPanel notifications={notifications} onClose={() => setShowNotifs(false)} />}
-      <BottomNav screen={screen} onNavigate={setScreen} />
+      <BottomNav screen={screen} onNavigate={setScreen} notesUnread={notesUnread} />
     </div>
   )
 }
@@ -338,11 +363,12 @@ const NAV_ITEMS: { id: Screen; label: string; icon: string }[] = [
   { id: 'settings',  label: 'Réglages',  icon: '⚙' },
 ]
 
-function BottomNav({ screen, onNavigate }: { screen: Screen; onNavigate: (s: Screen) => void }) {
+function BottomNav({ screen, onNavigate, notesUnread = 0 }: { screen: Screen; onNavigate: (s: Screen) => void; notesUnread?: number }) {
   return (
     <nav style={{ background: 'var(--surface)', borderTop: '1px solid var(--border)', display: 'flex', flexShrink: 0 }}>
       {NAV_ITEMS.map(item => {
         const active = screen === item.id
+        const badge = item.id === 'notes' && notesUnread > 0 ? notesUnread : 0
         return (
           <button key={item.id} onClick={() => onNavigate(item.id)} style={{
             flex: 1, padding: '8px 0 10px', display: 'flex', flexDirection: 'column',
@@ -350,8 +376,20 @@ function BottomNav({ screen, onNavigate }: { screen: Screen; onNavigate: (s: Scr
             color: active ? 'var(--primary)' : 'var(--xmuted)',
             fontWeight: active ? 600 : 400, fontSize: 10,
             borderTop: active ? '2px solid var(--primary)' : '2px solid transparent',
+            position: 'relative',
           }}>
-            <span style={{ fontSize: 16, lineHeight: 1 }}>{item.icon}</span>
+            <span style={{ fontSize: 16, lineHeight: 1, position: 'relative' }}>
+              {item.icon}
+              {badge > 0 && (
+                <span style={{
+                  position: 'absolute', top: -4, right: -8,
+                  background: '#DC2626', color: '#fff', borderRadius: 99,
+                  fontSize: 8.5, fontWeight: 800, minWidth: 14, height: 14,
+                  display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 3px',
+                  border: '1.5px solid var(--surface)',
+                }}>{badge > 9 ? '9+' : badge}</span>
+              )}
+            </span>
             {item.label}
           </button>
         )
