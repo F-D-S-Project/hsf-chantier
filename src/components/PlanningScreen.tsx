@@ -5,7 +5,7 @@ import type { Intervention, Zone, Trade, Company } from '@/types/database'
 import { effectiveStatus } from '@/lib/progress'
 import { STATUS_META } from '@/constants/status'
 import { getTradeColor, getZoneFloorColor } from '@/constants/colors'
-import { isTaskActiveOn, todayStr } from '@/lib/dates'
+import { todayStr } from '@/lib/dates'
 import { supabase } from '@/lib/supabase'
 import TaskDetail from './TaskDetail'
 
@@ -124,6 +124,68 @@ function getFrenchHolidays(year: number): Set<string> {
 
 // Cache per year
 const holidayCache: Record<number, Set<string>> = {}
+
+// ─── Gantt logic for planning view ───────────────────────────────────────────
+
+interface PlanGanttBar {
+  iv: Intervention
+  startCol: number
+  endCol: number
+  lane: number
+  startsBeforeRange: boolean
+  endsAfterRange: boolean
+}
+
+function buildGanttBarsPlan(ivs: Intervention[], days: string[]): { bars: PlanGanttBar[]; laneCount: number } {
+  const rangeStart = days[0]
+  const rangeEnd   = days[days.length - 1]
+
+  const active = ivs.filter(iv => {
+    const s = iv.start_date ?? '', e = iv.end_date ?? s
+    return s && s <= rangeEnd && e >= rangeStart
+  })
+
+  const withSpans = active.map(iv => {
+    const s = iv.start_date!
+    const e = iv.end_date ?? s
+    const startIdx = days.findIndex(d => d >= s)
+    const startCol = startIdx === -1 ? days.length - 1 : startIdx
+    const endIdx   = [...days].reverse().findIndex(d => d <= e)
+    const endCol   = endIdx === -1 ? days.length - 1 : days.length - 1 - endIdx
+    return {
+      iv,
+      startCol: Math.min(Math.max(startCol, 0), days.length - 1),
+      endCol:   Math.min(Math.max(endCol, startCol), days.length - 1),
+      startsBeforeRange: s < rangeStart,
+      endsAfterRange:    e > rangeEnd,
+      lane: 0,
+    }
+  })
+
+  withSpans.sort((a, b) =>
+    a.startCol !== b.startCol
+      ? a.startCol - b.startCol
+      : (b.endCol - b.startCol) - (a.endCol - a.startCol)
+  )
+
+  const laneEnds: number[] = []
+  for (const bar of withSpans) {
+    const laneIdx = laneEnds.findIndex(end => end < bar.startCol)
+    if (laneIdx === -1) { bar.lane = laneEnds.length; laneEnds.push(bar.endCol) }
+    else                { bar.lane = laneIdx;          laneEnds[laneIdx] = bar.endCol }
+  }
+
+  return { bars: withSpans, laneCount: laneEnds.length }
+}
+
+function cellBg(d: string, zone: Zone, today: string): string {
+  if (zone.deadline === d) return 'rgba(220,38,38,.18)'
+  if (d === today) return 'color-mix(in srgb, var(--primary) 5%, transparent)'
+  const lbl = ['Dim','Lun','Mar','Mer','Jeu','Ven','Sam'][new Date(d + 'T12:00:00').getDay()]
+  if (isHoliday(d)) return 'rgba(251,191,36,.15)'
+  if (lbl === 'Sam' || lbl === 'Dim') return 'var(--border)'
+  return 'transparent'
+}
 
 function isHoliday(dateStr: string): boolean {
   const year = parseInt(dateStr.slice(0, 4), 10)
@@ -610,7 +672,6 @@ export default function PlanningScreen({ interventions, zones, trades, companies
                     padding: isMulti ? '4px 3px' : '7px 6px',
                     borderRight: `3px solid ${fc}`,
                     verticalAlign: 'middle', textAlign: 'center',
-                    height: isMulti ? 44 : 64,
                     background: fc + '14',
                   }}>
                     <span style={{ fontSize: isMulti ? 8.5 : 11, fontWeight: 900, color: fc, lineHeight: 1.12, fontFamily: "'DM Sans', sans-serif", letterSpacing: '.01em', textTransform: 'uppercase', wordBreak: 'normal', overflowWrap: 'anywhere', display: 'block' }}>
@@ -618,67 +679,54 @@ export default function PlanningScreen({ interventions, zones, trades, companies
                     </span>
                   </td>
 
-                  {/* Day cells */}
-                  {days.map((d, di) => {
-                    const isFirstOfWeek = di > 0 && di % 7 === 0
-                    const isCurrentDay  = d === today
-                    const isDeadline    = zone.deadline === d
-                    const lbl2 = dayLabel(d)
-                    const isWeekend2 = lbl2.weekday === 'Sam' || lbl2.weekday === 'Dim'
-                    const isHol2     = isHoliday(d)
-
-                    let cellBg: string
-                    if (isDeadline) {
-                      cellBg = 'rgba(220,38,38,.18)'
-                    } else if (isCurrentDay) {
-                      cellBg = 'color-mix(in srgb, var(--primary) 5%, transparent)'
-                    } else if (isHol2) {
-                      cellBg = 'rgba(251,191,36,.15)'
-                    } else if (isWeekend2) {
-                      cellBg = 'var(--border)'
-                    } else {
-                      cellBg = 'transparent'
-                    }
-
-                    const cards  = interventions
-                      .filter(iv => iv.zone === zone.id && isTaskActiveOn(iv, d) && !(iv.off_days?.includes(d)))
-                      .sort((a, b) => {
-                        const ap = a.priority ?? 3, bp = b.priority ?? 3
-                        if (ap !== bp) return ap - bp
-                        return (a.start_date ?? '').localeCompare(b.start_date ?? '')
-                      })
-
+                  {/* Gantt area — single td spanning all day columns */}
+                  {(() => {
+                    const zoneIvs = interventions.filter(iv => iv.zone === zone.id)
+                    const { bars, laneCount } = buildGanttBarsPlan(zoneIvs, days)
                     return (
                       <td
-                        key={d}
-                        onClick={() => handleCellClick(zone.id, d)}
-                        style={{
-                          position: 'relative', overflow: 'hidden',
-                          padding: isMulti ? 2 : 3,
-                          height: isMulti ? 44 : 64,
-                          verticalAlign: 'top',
-                          borderLeft: `${isFirstOfWeek ? 2 : 1}px solid var(--border)`,
-                          background: cellBg,
-                          cursor: moveMode ? 'crosshair' : 'default',
-                        }}
+                        colSpan={days.length}
+                        style={{ padding: 0, position: 'relative', verticalAlign: 'top', overflow: 'visible' }}
                       >
-                        {cards.map(iv => (
-                          <TaskBar
-                            key={iv.id}
-                            iv={iv}
-                            trades={trades}
-                            isMulti={isMulti}
-                            weeks={weeks}
-                            inMoveMode={!!moveMode}
-                            dimmed={!!highlightCompany && iv.company !== highlightCompany}
-                            onClick={() => {
-                              if (!moveMode) setSelectedId(iv.id)
-                            }}
-                          />
-                        ))}
+                        {/* Background day grid (click handlers + colors) */}
+                        <div style={{
+                          position: 'absolute', inset: 0,
+                          display: 'grid', gridTemplateColumns: `repeat(${days.length}, 1fr)`,
+                          zIndex: 0,
+                        }}>
+                          {days.map((d, di) => (
+                            <div
+                              key={d}
+                              onClick={() => handleCellClick(zone.id, d)}
+                              style={{
+                                borderLeft: `${di > 0 && di % 7 === 0 ? 2 : 1}px solid var(--border)`,
+                                background: cellBg(d, zone, today),
+                                cursor: moveMode ? 'crosshair' : 'default',
+                                minHeight: 36,
+                              }}
+                            />
+                          ))}
+                        </div>
+                        {/* Gantt bars */}
+                        <div style={{ position: 'relative', zIndex: 1, minHeight: 36 }}>
+                          {Array.from({ length: Math.max(laneCount, 1) }, (_, lane) => (
+                            <PlanLaneRow
+                              key={lane}
+                              bars={bars.filter(b => b.lane === lane)}
+                              days={days}
+                              today={today}
+                              trades={trades}
+                              companies={companies}
+                              isMulti={isMulti}
+                              moveMode={!!moveMode}
+                              highlightCompany={highlightCompany}
+                              onClickTask={iv => setSelectedId(iv.id)}
+                            />
+                          ))}
+                        </div>
                       </td>
                     )
-                  })}
+                  })()}
 
                   {/* Deadline cell */}
                   <DeadlineCell zone={zone} isMulti={isMulti} />
@@ -726,6 +774,97 @@ export default function PlanningScreen({ interventions, zones, trades, companies
           onAdd={onAdd}
         />
       )}
+    </div>
+  )
+}
+
+// ─── Gantt lane row (planning view) ──────────────────────────────────────────
+
+function PlanLaneRow({ bars, days, today, trades, companies, isMulti, moveMode, highlightCompany, onClickTask }: {
+  bars: PlanGanttBar[]
+  days: string[]
+  today: string
+  trades: Trade[]
+  companies: Company[]
+  isMulti: boolean
+  moveMode: boolean
+  highlightCompany?: string
+  onClickTask: (iv: Intervention) => void
+}) {
+  const n = days.length
+  type Seg = { type: 'empty'; col: number; span: number } | { type: 'task'; bar: PlanGanttBar; span: number }
+  const segs: Seg[] = []
+  let cursor = 0
+  const sorted = [...bars].sort((a, b) => a.startCol - b.startCol)
+
+  for (const bar of sorted) {
+    if (bar.startCol > cursor) segs.push({ type: 'empty', col: cursor, span: bar.startCol - cursor })
+    segs.push({ type: 'task', bar, span: bar.endCol - bar.startCol + 1 })
+    cursor = bar.endCol + 1
+  }
+  if (cursor < n) segs.push({ type: 'empty', col: cursor, span: n - cursor })
+
+  return (
+    <div style={{ display: 'grid', gridTemplateColumns: `repeat(${n}, 1fr)`, minHeight: isMulti ? 30 : 38 }}>
+      {segs.flatMap((seg, i) => {
+        if (seg.type === 'empty') {
+          return Array.from({ length: seg.span }, (_, j) => (
+            <div key={`e-${i}-${j}`} style={{ gridColumn: seg.col + j + 1, minHeight: isMulti ? 30 : 38 }} />
+          ))
+        }
+        const { bar } = seg
+        const co      = companies.find(c => c.name === bar.iv.company)
+        const tr      = trades.find(t => t.id === (co?.trade_id ?? bar.iv.trade))
+        const tc      = getTradeColor(tr?.color ?? 'blue')
+        const es      = effectiveStatus(bar.iv)
+        const sm      = STATUS_META[es]
+        const isAlert = es === 'en_retard' || es === 'bloque'
+        const accent  = isAlert ? sm.dot : tc.b
+        const bg      = isAlert ? sm.bg  : tc.bg
+        const dimmed  = !!highlightCompany && bar.iv.company !== highlightCompany
+
+        return [(
+          <div
+            key={`t-${bar.iv.id}`}
+            style={{
+              gridColumn: `${bar.startCol + 1} / ${bar.endCol + 2}`,
+              padding: isMulti ? '2px 2px' : '3px 3px',
+              pointerEvents: moveMode ? 'none' : 'auto',
+              opacity: dimmed ? 0.25 : 1,
+              filter: dimmed ? 'grayscale(60%)' : undefined,
+            }}
+            onClick={moveMode ? undefined : e => { e.stopPropagation(); onClickTask(bar.iv) }}
+          >
+            <div style={{
+              height: '100%',
+              background: bg,
+              borderRadius: bar.startsBeforeRange ? '0 4px 4px 0' : bar.endsAfterRange ? '4px 0 0 4px' : 4,
+              borderLeft: `2.5px solid ${accent}`,
+              border: `1px solid ${accent}25`,
+              borderLeftWidth: '2.5px',
+              borderLeftColor: accent,
+              padding: isMulti ? '2px 5px' : '3px 7px',
+              cursor: moveMode ? 'crosshair' : 'pointer',
+              overflow: 'hidden',
+              minHeight: isMulti ? 26 : 32,
+              display: 'flex',
+              flexDirection: 'column',
+              justifyContent: 'center',
+              gap: 1,
+            }}>
+              <div style={{ fontSize: isMulti ? 8 : 9.5, fontWeight: 800, color: accent, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', lineHeight: 1.2 }}>
+                {bar.iv.company}
+                {isAlert && <span style={{ marginLeft: 4, fontSize: isMulti ? 6.5 : 8, opacity: .85 }}>· {sm.label}</span>}
+              </div>
+              {!isMulti && (
+                <div style={{ fontSize: 8.5, color: '#2A2A2A', lineHeight: 1.3, overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 1, WebkitBoxOrient: 'vertical', fontWeight: 500 }}>
+                  {bar.iv.task}
+                </div>
+              )}
+            </div>
+          </div>
+        )]
+      })}
     </div>
   )
 }

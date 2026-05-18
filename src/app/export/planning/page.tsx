@@ -245,7 +245,7 @@ export default function ExportPlanningPage() {
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700;800;900&family=DM+Mono:wght@400;500&display=swap');
         * { box-sizing: border-box; margin: 0; padding: 0; }
-        html, body { font-family: 'DM Sans', sans-serif; background: #ECEAE5; }
+        html, body { font-family: 'DM Sans', sans-serif; background: #ECEAE5; height: auto !important; min-height: 100%; overflow-y: auto !important; }
         .print-page {
           width: 277mm;
           margin: 0 auto 28px;
