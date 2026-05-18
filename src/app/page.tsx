@@ -11,6 +11,7 @@ import ListScreen from '@/components/ListScreen'
 import PlanningScreen from '@/components/PlanningScreen'
 import BriefingsScreen from '@/components/BriefingsScreen'
 import SettingsScreen from '@/components/SettingsScreen'
+import NotesScreen from '@/components/NotesScreen'
 import TaskDetail from '@/components/TaskDetail'
 import CompanyScreen from '@/components/CompanyScreen'
 
@@ -29,7 +30,7 @@ async function loadData() {
   }
 }
 
-type Screen = 'dashboard' | 'planning' | 'list' | 'briefings' | 'settings'
+type Screen = 'dashboard' | 'planning' | 'list' | 'notes' | 'briefings' | 'settings'
 type CompanyScreen = 'mytasks' | 'planning'
 
 interface AppNotification {
@@ -194,6 +195,7 @@ export default function PlanifyApp() {
         {screen === 'dashboard' && <DashboardScreen zones={zones} interventions={interventions} trades={trades} onUpdate={handleUpdate} />}
         {screen === 'list' && <ListScreen interventions={interventions} zones={zones} trades={trades} onUpdate={handleUpdate} />}
         {screen === 'planning' && <PlanningScreen interventions={interventions} zones={zones} trades={trades} companies={companies} onUpdate={handleUpdate} onAdd={handleAdd} />}
+        {screen === 'notes' && <NotesScreen interventions={interventions} zones={zones} trades={trades} companies={companies} authorName={authorName} userRole={userRole} userCompany={userCompany ?? undefined} />}
         {screen === 'briefings' && <BriefingsScreen interventions={interventions} zones={zones} trades={trades} companies={companies} />}
         {screen === 'settings' && <SettingsScreen zones={zones} trades={trades} companies={companies} onZonesChange={setZones} onTradesChange={setTrades} onCompaniesChange={setCompanies} />}
       </main>
@@ -288,7 +290,7 @@ function AppHeader({ screen, onNavigate, interventions, onLogout, unreadCount, o
 }) {
   const blocked = interventions.filter(iv => iv.status === 'bloque').length
   const labels: Record<Screen, string> = {
-    dashboard: 'Dashboard', planning: 'Planning', list: 'Tâches', briefings: 'Briefings', settings: 'Paramètres',
+    dashboard: 'Dashboard', planning: 'Planning', list: 'Tâches', notes: 'Notes', briefings: 'Briefings', settings: 'Paramètres',
   }
   return (
     <header style={{
@@ -331,6 +333,7 @@ const NAV_ITEMS: { id: Screen; label: string; icon: string }[] = [
   { id: 'dashboard', label: 'Dashboard', icon: '◉' },
   { id: 'planning',  label: 'Planning',  icon: '▦' },
   { id: 'list',      label: 'Tâches',    icon: '≡' },
+  { id: 'notes',     label: 'Notes',     icon: '📝' },
   { id: 'briefings', label: 'Briefings', icon: '◎' },
   { id: 'settings',  label: 'Réglages',  icon: '⚙' },
 ]

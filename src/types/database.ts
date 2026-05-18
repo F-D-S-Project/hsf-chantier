@@ -94,3 +94,39 @@ export interface ExternalContact {
   phone: string | null
   created_at?: string
 }
+
+export type NoteScope    = 'intervention' | 'libre'
+export type NoteStatus   = 'ouvert' | 'en_cours' | 'resolu' | 'clos'
+export type NoteCategory = 'info' | 'demande' | 'reserve' | 'incident' | 'rappel'
+
+export interface NoteAttachment {
+  url: string
+  name: string
+  type: string
+  size: number
+}
+
+export interface Note {
+  id: string
+  created_at: string
+  updated_at: string
+  author_id: string | null
+  author_name: string
+
+  title: string | null
+  content: string
+
+  intervention_id: string | null
+  zone_ids:        string[]
+  company_codes:   string[]
+  trade_codes:     string[]
+
+  scope:    NoteScope
+  category: NoteCategory | null
+
+  status:   NoteStatus
+  due_date: string | null
+
+  parent_id:   string | null
+  attachments: NoteAttachment[]
+}
