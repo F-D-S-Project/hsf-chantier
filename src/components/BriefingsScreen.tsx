@@ -1,7 +1,8 @@
 'use client'
 
-import { useState } from 'react'
-import type { Intervention, Zone, Trade, Company } from '@/types/database'
+import { useEffect, useState } from 'react'
+import type { Intervention, Zone, Trade, Company, ExternalContact } from '@/types/database'
+import { supabase } from '@/lib/supabase'
 import { effectiveStatus } from '@/lib/progress'
 import { STATUS_META } from '@/constants/status'
 import { getZoneFloorColor, getTradeColor } from '@/constants/colors'
@@ -294,6 +295,13 @@ export default function BriefingsScreen({ interventions, zones, trades, companie
     try { return JSON.parse(localStorage.getItem('planify_briefings_sent') ?? '{}') } catch { return {} }
   })
   const [recapOpen, setRecapOpen]         = useState(false)
+  const [extContacts, setExtContacts]     = useState<ExternalContact[]>([])
+
+  useEffect(() => {
+    supabase.from('external_contacts').select('*').order('created_at').then(({ data }) => {
+      if (data) setExtContacts(data as ExternalContact[])
+    })
+  }, [])
 
   const allWeeks = [getWeekRange(0), getWeekRange(1), getWeekRange(2)]
   const activeWeeks = allWeeks.filter((_, i) => selectedWeeks.includes(i))
@@ -358,7 +366,7 @@ export default function BriefingsScreen({ interventions, zones, trades, companie
   const cntRetard  = interventions.filter(iv => effectiveStatus(iv) === 'en_retard').length
   const cntTotal   = interventions.length
 
-  const recapMsg = recapOpen ? generateRecap(interventions, zones, effectiveWeeks) : ''
+  const recapMsg = generateRecap(interventions, zones, effectiveWeeks)
 
   return (
     <div style={{ height: '100%', overflowY: 'auto', paddingBottom: 80 }}>
@@ -439,10 +447,23 @@ export default function BriefingsScreen({ interventions, zones, trades, companie
         </button>
         {recapOpen && (
           <div style={{ marginTop: 8, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 'var(--r)', boxShadow: 'var(--shadow)', overflow: 'hidden' }}>
-            <div style={{ display: 'flex', gap: 8, padding: '10px 12px', borderBottom: '1px solid var(--border)' }}>
+            <div style={{ display: 'flex', gap: 8, padding: '10px 12px', borderBottom: '1px solid var(--border)', flexWrap: 'wrap', alignItems: 'center' }}>
               <button onClick={() => copyText(recapMsg, 'recap')} style={btnStyle(copied === 'recap')}>
                 {copied === 'recap' ? '✓ Copié' : '⎘ Copier'}
               </button>
+              {extContacts.map(ct => {
+                const link = ct.phone ? waUrl(ct.phone, recapMsg) : null
+                if (!link) return null
+                return (
+                  <a key={ct.id} href={link} target="_blank" rel="noreferrer" style={{
+                    display: 'inline-flex', alignItems: 'center', gap: 5, padding: '7px 12px',
+                    borderRadius: 'var(--r-xs)', fontSize: 12, fontWeight: 700, cursor: 'pointer',
+                    background: '#25D366', color: '#fff', textDecoration: 'none',
+                  }}>
+                    WhatsApp · {ct.name}{ct.role ? ` (${ct.role})` : ''}
+                  </a>
+                )
+              })}
             </div>
             <pre style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 12, color: 'var(--text)', lineHeight: 1.7, whiteSpace: 'pre-wrap', wordBreak: 'break-word', margin: 0, padding: '14px 16px', overflowY: 'auto', maxHeight: 400 }}>
               {recapMsg}

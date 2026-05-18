@@ -86,3 +86,11 @@ export interface Notification {
   read: boolean
   created_at: string
 }
+
+export interface ExternalContact {
+  id: string
+  name: string
+  role: string | null
+  phone: string | null
+  created_at?: string
+}

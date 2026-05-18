@@ -1,7 +1,7 @@
 'use client'
 
-import { useState } from 'react'
-import type { Zone, Trade, Company } from '@/types/database'
+import { useEffect, useState } from 'react'
+import type { Zone, Trade, Company, ExternalContact } from '@/types/database'
 import { getZoneFloorColor, getTradeColor, TRADE_COLORS, type TradeColorKey } from '@/constants/colors'
 import { supabase } from '@/lib/supabase'
 
@@ -14,7 +14,7 @@ interface Props {
   onCompaniesChange: (companies: Company[]) => void
 }
 
-type Tab = 'zones' | 'trades' | 'companies'
+type Tab = 'zones' | 'trades' | 'companies' | 'contacts'
 
 const FR_MNTHS = ['jan.','fév.','mar.','avr.','mai','juin','juil.','août','sep.','oct.','nov.','déc.']
 
@@ -60,14 +60,14 @@ export default function SettingsScreen({ zones, trades, companies, onZonesChange
 
       {/* Tabs */}
       <div style={{ display: 'flex', borderBottom: '1px solid var(--border)', marginBottom: 16 }}>
-        {(['zones', 'trades', 'companies'] as Tab[]).map(t => (
+        {(['zones', 'trades', 'companies', 'contacts'] as Tab[]).map(t => (
           <button key={t} onClick={() => setTab(t)} style={{
-            flex: 1, padding: '9px', background: 'transparent', border: 'none', fontSize: 13, fontWeight: 600,
+            flex: 1, padding: '9px 4px', background: 'transparent', border: 'none', fontSize: 11, fontWeight: 600,
             cursor: 'pointer', color: tab === t ? 'var(--primary)' : 'var(--muted)',
             fontFamily: "'DM Sans', sans-serif",
             borderBottom: tab === t ? '2px solid var(--primary)' : '2px solid transparent', marginBottom: -1,
           }}>
-            {t === 'zones' ? 'Zones' : t === 'trades' ? 'Corps de métier' : 'Entreprises'}
+            {t === 'zones' ? 'Zones' : t === 'trades' ? 'Corps' : t === 'companies' ? 'Entreprises' : 'Contacts ext.'}
           </button>
         ))}
       </div>
@@ -75,6 +75,7 @@ export default function SettingsScreen({ zones, trades, companies, onZonesChange
       {tab === 'zones'     && <ZonesTab zones={zones} onZonesChange={onZonesChange} />}
       {tab === 'trades'    && <TradesTab trades={trades} onTradesChange={onTradesChange} />}
       {tab === 'companies' && <CompaniesTab companies={companies} trades={trades} onCompaniesChange={onCompaniesChange} />}
+      {tab === 'contacts'  && <ExternalContactsTab />}
     </div>
   )
 }
@@ -504,6 +505,118 @@ function CompanyModal({ initial, trades, onClose, onSaved }: {
         <div>
           <label style={modalLabelStyle}>Email</label>
           <input style={modalInputStyle} value={email} onChange={e => setEmail(e.target.value)} placeholder="ex. contact@dupont.fr" type="email" />
+        </div>
+        {error && <div style={{ fontSize: 12, color: '#DC2626' }}>{error}</div>}
+        <button onClick={handleSubmit} disabled={saving} style={submitBtnStyle}>{saving ? 'Enregistrement…' : (initial ? 'Enregistrer' : 'Ajouter')}</button>
+      </div>
+    </BottomModal>
+  )
+}
+
+// ─── External contacts tab ────────────────────────────────────────────────────
+
+function ExternalContactsTab() {
+  const [contacts, setContacts] = useState<ExternalContact[]>([])
+  const [showAdd, setShowAdd]   = useState(false)
+  const [editCt, setEditCt]     = useState<ExternalContact | null>(null)
+  const [deleting, setDeleting] = useState<string | null>(null)
+
+  useEffect(() => {
+    supabase.from('external_contacts').select('*').order('created_at').then(({ data }) => {
+      if (data) setContacts(data as ExternalContact[])
+    })
+  }, [])
+
+  async function handleDelete(id: string) {
+    setDeleting(id)
+    await supabase.from('external_contacts').delete().eq('id', id)
+    setContacts(prev => prev.filter(c => c.id !== id))
+    setDeleting(null)
+  }
+
+  return (
+    <>
+      <div style={{ marginBottom: 10, fontSize: 11, color: 'var(--muted)', lineHeight: 1.5 }}>
+        Contacts externes (AMO, MOE…) qui reçoivent le récap chantier complet par WhatsApp.
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+        {contacts.length === 0 && (
+          <div style={{ fontSize: 12, color: 'var(--muted)', textAlign: 'center', padding: '16px 0' }}>Aucun contact externe</div>
+        )}
+        {contacts.map(ct => (
+          <div key={ct.id} style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 'var(--r-sm)', padding: '10px 14px', boxShadow: 'var(--shadow)', display: 'flex', alignItems: 'center', gap: 10 }}>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)' }}>{ct.name}</div>
+              <div style={{ fontSize: 10, color: 'var(--muted)', fontFamily: "'DM Mono', monospace", marginTop: 1 }}>
+                {ct.role ? `${ct.role} · ` : ''}{ct.phone ?? 'Aucun numéro'}
+              </div>
+            </div>
+            <button onClick={() => setEditCt(ct)} style={smallBtnStyle('neutral')} title="Modifier">✎</button>
+            <button onClick={() => handleDelete(ct.id)} disabled={deleting === ct.id} style={{ ...smallBtnStyle('neutral'), color: '#DC2626', borderColor: '#FECACA' }} title="Supprimer">
+              {deleting === ct.id ? '…' : '✕'}
+            </button>
+          </div>
+        ))}
+        <button onClick={() => setShowAdd(true)} style={addBtnStyle}>+ Ajouter un contact externe</button>
+      </div>
+
+      {(showAdd || editCt) && (
+        <ExternalContactModal
+          initial={editCt}
+          onClose={() => { setShowAdd(false); setEditCt(null) }}
+          onSaved={saved => {
+            if (editCt) setContacts(prev => prev.map(c => c.id === saved.id ? saved : c))
+            else setContacts(prev => [...prev, saved])
+            setShowAdd(false); setEditCt(null)
+          }}
+        />
+      )}
+    </>
+  )
+}
+
+function ExternalContactModal({ initial, onClose, onSaved }: {
+  initial: ExternalContact | null
+  onClose: () => void
+  onSaved: (ct: ExternalContact) => void
+}) {
+  const [name, setName]     = useState(initial?.name ?? '')
+  const [role, setRole]     = useState(initial?.role ?? '')
+  const [phone, setPhone]   = useState(initial?.phone ?? '')
+  const [saving, setSaving] = useState(false)
+  const [error, setError]   = useState<string | null>(null)
+
+  async function handleSubmit() {
+    if (!name.trim()) { setError('Le nom est requis'); return }
+    setSaving(true); setError(null)
+    const payload = { name: name.trim(), role: role.trim() || null, phone: phone.trim() || null }
+    if (initial) {
+      const { error: err } = await supabase.from('external_contacts').update(payload).eq('id', initial.id)
+      setSaving(false)
+      if (err) { setError(err.message); return }
+      onSaved({ ...initial, ...payload })
+    } else {
+      const { data, error: err } = await supabase.from('external_contacts').insert([payload]).select().single()
+      setSaving(false)
+      if (err || !data) { setError(err?.message ?? 'Erreur'); return }
+      onSaved(data as ExternalContact)
+    }
+  }
+
+  return (
+    <BottomModal title={initial ? 'Modifier le contact' : 'Nouveau contact externe'} onClose={onClose}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+        <div>
+          <label style={modalLabelStyle}>Nom</label>
+          <input style={modalInputStyle} value={name} onChange={e => setName(e.target.value)} placeholder="ex. Marie Durand" autoFocus />
+        </div>
+        <div>
+          <label style={modalLabelStyle}>Rôle</label>
+          <input style={modalInputStyle} value={role} onChange={e => setRole(e.target.value)} placeholder="ex. AMO, MOE, Architecte…" />
+        </div>
+        <div>
+          <label style={modalLabelStyle}>Téléphone WhatsApp</label>
+          <input style={modalInputStyle} value={phone} onChange={e => setPhone(e.target.value)} placeholder="ex. 06 12 34 56 78" type="tel" />
         </div>
         {error && <div style={{ fontSize: 12, color: '#DC2626' }}>{error}</div>}
         <button onClick={handleSubmit} disabled={saving} style={submitBtnStyle}>{saving ? 'Enregistrement…' : (initial ? 'Enregistrer' : 'Ajouter')}</button>
