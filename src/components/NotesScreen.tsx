@@ -809,7 +809,7 @@ export function NoteFormModal({ mode, iv, zones, trades, companies, authorName, 
           }}>✕</button>
         </div>
 
-        <div style={{ padding: '0 16px', display: 'flex', flexDirection: 'column', gap: 14 }}>
+        <div style={{ padding: '0 16px', display: 'flex', flexDirection: 'column', gap: 14, flex: 1, overflowY: 'auto', minHeight: 0 }}>
           {/* Title (optional) */}
           <div>
             <label style={lbl}>Titre <span style={{ color: 'var(--xmuted)', fontWeight: 400 }}>(optionnel)</span></label>
