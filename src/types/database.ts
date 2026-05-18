@@ -93,6 +93,7 @@ export interface ExternalContact {
   name: string
   role: string | null
   phone: string | null
+  email: string | null
   created_at?: string
 }
 

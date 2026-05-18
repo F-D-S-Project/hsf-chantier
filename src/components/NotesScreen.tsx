@@ -134,7 +134,7 @@ interface Props {
   companies: Company[]
   authorName: string
   userId?: string
-  userRole?: 'admin' | 'company'
+  userRole?: 'admin' | 'company' | 'external'
   userCompany?: string
 }
 
@@ -238,6 +238,11 @@ export default function NotesScreen({ interventions, zones, trades, companies, a
           n.company_codes.includes(userCompany)
           || n.trade_codes.some(t => myTradeIds.has(t))
           || (!!n.intervention_id && myIvIds.has(n.intervention_id))
+        if (!concerns) return false
+      }
+      // External (MOE/AMO) view: notes libres + notes dont ils sont auteurs
+      if (userRole === 'external') {
+        const concerns = n.scope === 'libre' || n.author_name === authorName
         if (!concerns) return false
       }
       return true
@@ -369,7 +374,7 @@ export default function NotesScreen({ interventions, zones, trades, companies, a
 
         {/* Search + scope */}
         <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 8 }}>
-          {userRole !== 'company' && (
+          {userRole === 'admin' && (
             <input
               value={query}
               onChange={e => setQuery(e.target.value)}
@@ -381,7 +386,7 @@ export default function NotesScreen({ interventions, zones, trades, companies, a
               }}
             />
           )}
-          {userRole !== 'company' && (
+          {userRole === 'admin' && (
             <div style={{ display: 'flex', gap: 3 }}>
               {SCOPES.map(s => (
                 <button key={s.value} onClick={() => setScopeFilt(s.value)} style={{
@@ -1395,6 +1400,24 @@ function NoteDetail({ note, thread, zones, trades, companies, interventions, aut
     setAttachments(next)
   }
 
+  async function replaceAttachment(idx: number, file: File) {
+    setUploading(true)
+    const path = `${note.id}/${Date.now()}-${file.name}`
+    const { error: upErr } = await supabase.storage.from('notes-attachments').upload(path, file)
+    if (upErr) {
+      setUploading(false)
+      onToast(upErr.message?.toLowerCase().includes('bucket') ? 'Bucket « notes-attachments » à créer.' : upErr.message, 'error')
+      return
+    }
+    const { data: { publicUrl } } = supabase.storage.from('notes-attachments').getPublicUrl(path)
+    const next = attachments.map((a, i) => i === idx ? { url: publicUrl, name: file.name, type: file.type, size: file.size } : a)
+    const { error: updErr } = await supabase.from('notes').update({ attachments: next }).eq('id', note.id)
+    setUploading(false)
+    if (updErr) { onToast(updErr.message, 'error'); return }
+    setAttachments(next)
+    onToast('Pièce jointe remplacée ✓', 'success')
+  }
+
   return (
     <>
       <div onClick={onClose} style={modalBackdrop} />
@@ -1500,7 +1523,7 @@ function NoteDetail({ note, thread, zones, trades, companies, interventions, aut
           ) : (
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
               {attachments.map((a, i) => (
-                <AttachmentChip key={i} att={a} onRemove={isAuthor ? () => removeAttachment(i) : undefined} />
+                <AttachmentChip key={i} att={a} onRemove={() => removeAttachment(i)} onReplace={f => replaceAttachment(i, f)} />
               ))}
             </div>
           )}
@@ -1585,8 +1608,9 @@ function NoteDetail({ note, thread, zones, trades, companies, interventions, aut
 
 // ─── Attachment chip ────────────────────────────────────────────────────────
 
-function AttachmentChip({ att, onRemove }: { att: NoteAttachment; onRemove?: () => void }) {
+function AttachmentChip({ att, onRemove, onReplace }: { att: NoteAttachment; onRemove?: () => void; onReplace?: (f: File) => void }) {
   const isImg = att.type.startsWith('image/')
+  const replaceRef = useRef<HTMLInputElement>(null)
   return (
     <div style={{ position: 'relative', display: 'inline-block' }}>
       <a href={att.url} target="_blank" rel="noreferrer" style={{
@@ -1602,6 +1626,20 @@ function AttachmentChip({ att, onRemove }: { att: NoteAttachment; onRemove?: () 
         )}
         <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{att.name}</span>
       </a>
+      {onReplace && (
+        <>
+          <button onClick={e => { e.preventDefault(); e.stopPropagation(); replaceRef.current?.click() }} style={{
+            position: 'absolute', top: -5, right: 14, width: 16, height: 16, borderRadius: '50%',
+            background: 'var(--primary)', color: '#fff', border: 'none', cursor: 'pointer',
+            fontSize: 9, fontWeight: 700, lineHeight: 1, display: 'flex', alignItems: 'center', justifyContent: 'center',
+          }} title="Remplacer">↻</button>
+          <input
+            ref={replaceRef} type="file" hidden
+            accept="image/jpeg,image/png,image/heic,image/heif,application/pdf"
+            onChange={e => { const f = e.target.files?.[0]; if (f) { onReplace(f); e.target.value = '' } }}
+          />
+        </>
+      )}
       {onRemove && (
         <button onClick={e => { e.preventDefault(); e.stopPropagation(); onRemove() }} style={{
           position: 'absolute', top: -5, right: -5, width: 16, height: 16, borderRadius: '50%',

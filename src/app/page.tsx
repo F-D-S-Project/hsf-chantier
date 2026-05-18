@@ -32,6 +32,7 @@ async function loadData() {
 
 type Screen = 'dashboard' | 'planning' | 'list' | 'notes' | 'briefings' | 'settings'
 type CompanyScreen = 'mytasks' | 'planning' | 'notes'
+type ExternalScreen = 'planning' | 'briefings' | 'notes'
 
 interface AppNotification {
   id: string
@@ -48,13 +49,14 @@ export default function PlanifyApp() {
   const router = useRouter()
   const [screen, setScreen]       = useState<Screen>('dashboard')
   const [coScreen, setCoScreen]   = useState<CompanyScreen>('mytasks')
+  const [extScreen, setExtScreen] = useState<ExternalScreen>('planning')
   const [loading, setLoading]     = useState(true)
   const [error, setError]         = useState<string | null>(null)
   const [zones, setZones]                   = useState<Zone[]>([])
   const [trades, setTrades]                 = useState<Trade[]>([])
   const [interventions, setInterventions]   = useState<Intervention[]>([])
   const [companies, setCompanies]           = useState<Company[]>([])
-  const [userRole, setUserRole]             = useState<'admin' | 'company'>('admin')
+  const [userRole, setUserRole]             = useState<'admin' | 'company' | 'external'>('admin')
   const [userCompany, setUserCompany]       = useState<string | null>(null)
   const [userId, setUserId]                 = useState<string | null>(null)
   const [authorName, setAuthorName]         = useState<string>('Admin')
@@ -204,6 +206,67 @@ export default function PlanifyApp() {
             const active = coScreen === item.id
             return (
               <button key={item.id} onClick={() => setCoScreen(item.id)} style={{
+                flex: 1, padding: '8px 0 10px', display: 'flex', flexDirection: 'column',
+                alignItems: 'center', gap: 3, border: 'none', cursor: 'pointer', background: 'transparent',
+                color: active ? 'var(--primary)' : 'var(--xmuted)', fontWeight: active ? 600 : 400, fontSize: 10,
+                borderTop: active ? '2px solid var(--primary)' : '2px solid transparent',
+              }}>
+                <span style={{ fontSize: 16, lineHeight: 1 }}>{item.icon}</span>
+                {item.label}
+              </button>
+            )
+          })}
+        </nav>
+      </div>
+    )
+  }
+
+  // ── Vue externe (MOE, AMO, architecte…) ──
+  if (userRole === 'external') {
+    return (
+      <div style={{ height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+        <header style={{ background: 'var(--hdr)', color: 'var(--hdr-text)', padding: '0 16px', height: 52, display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0, zIndex: 50 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <span style={{ fontWeight: 900, fontSize: 13, letterSpacing: '.06em', opacity: .45 }}>PLANIFY</span>
+            <span style={{ width: 1, height: 16, background: 'rgba(255,255,255,.2)' }} />
+            <span style={{ fontWeight: 700, fontSize: 15, letterSpacing: '-.3px' }}>{authorName}</span>
+            <span style={{ fontSize: 11, opacity: .4, fontWeight: 500 }}>HSF Av. Marceau</span>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <AccountPill name={authorName} />
+            <BellButton count={unreadCount} onClick={() => { setShowNotifs(true); handleMarkAllRead() }} />
+            <button onClick={handleLogout} style={{
+              background: 'rgba(255,255,255,.08)', border: '1px solid rgba(255,255,255,.15)',
+              borderRadius: 7, padding: '5px 10px', color: 'rgba(255,255,255,.7)',
+              fontSize: 11, fontWeight: 600, cursor: 'pointer', letterSpacing: '.02em',
+            }}>Déconnexion</button>
+          </div>
+        </header>
+        <main style={{ flex: 1, overflow: 'hidden', position: 'relative' }}>
+          {extScreen === 'planning' && (
+            <PlanningScreen
+              interventions={interventions} zones={zones} trades={trades} companies={companies}
+              readOnly authorName={authorName}
+              onUpdate={handleUpdate} onAdd={handleAdd}
+            />
+          )}
+          {extScreen === 'briefings' && (
+            <BriefingsScreen interventions={interventions} zones={zones} trades={trades} companies={companies} />
+          )}
+          {extScreen === 'notes' && (
+            <NotesScreen
+              interventions={interventions} zones={zones} trades={trades} companies={companies}
+              authorName={authorName} userId={userId ?? undefined}
+              userRole={userRole}
+            />
+          )}
+        </main>
+        {showNotifs && <NotifPanel notifications={notifications} onClose={() => setShowNotifs(false)} onNavigate={s => { setExtScreen(s === 'notes' ? 'notes' : s === 'briefings' ? 'briefings' : 'planning'); setShowNotifs(false) }} />}
+        <nav style={{ background: 'var(--surface)', borderTop: '1px solid var(--border)', display: 'flex', flexShrink: 0 }}>
+          {([{ id: 'planning', label: 'Planning', icon: '▦' }, { id: 'briefings', label: 'Briefings', icon: '◎' }, { id: 'notes', label: 'Notes', icon: '📝' }] as { id: ExternalScreen; label: string; icon: string }[]).map(item => {
+            const active = extScreen === item.id
+            return (
+              <button key={item.id} onClick={() => setExtScreen(item.id)} style={{
                 flex: 1, padding: '8px 0 10px', display: 'flex', flexDirection: 'column',
                 alignItems: 'center', gap: 3, border: 'none', cursor: 'pointer', background: 'transparent',
                 color: active ? 'var(--primary)' : 'var(--xmuted)', fontWeight: active ? 600 : 400, fontSize: 10,

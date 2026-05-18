@@ -607,6 +607,7 @@ function ExternalContactsTab() {
   const [showAdd, setShowAdd]   = useState(false)
   const [editCt, setEditCt]     = useState<ExternalContact | null>(null)
   const [deleting, setDeleting] = useState<string | null>(null)
+  const [inviteCt, setInviteCt] = useState<ExternalContact | null>(null)
 
   useEffect(() => {
     supabase.from('external_contacts').select('*').order('created_at').then(({ data }) => {
@@ -624,7 +625,7 @@ function ExternalContactsTab() {
   return (
     <>
       <div style={{ marginBottom: 10, fontSize: 11, color: 'var(--muted)', lineHeight: 1.5 }}>
-        Contacts externes (AMO, MOE…) qui reçoivent le récap chantier complet par WhatsApp.
+        Contacts externes (AMO, MOE, architecte…). Ils reçoivent le récap chantier par WhatsApp et peuvent recevoir un accès Planify en lecture seule.
       </div>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
         {contacts.length === 0 && (
@@ -635,9 +636,12 @@ function ExternalContactsTab() {
             <div style={{ flex: 1, minWidth: 0 }}>
               <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)' }}>{ct.name}</div>
               <div style={{ fontSize: 10, color: 'var(--muted)', fontFamily: "'DM Mono', monospace", marginTop: 1 }}>
-                {ct.role ? `${ct.role} · ` : ''}{ct.phone ?? 'Aucun numéro'}
+                {ct.role ? `${ct.role} · ` : ''}{ct.phone ?? 'Aucun numéro'}{ct.email ? ` · ${ct.email}` : ''}
               </div>
             </div>
+            {ct.email && (
+              <button onClick={() => setInviteCt(ct)} style={smallBtnStyle('neutral')} title="Générer un lien d'accès">🔑</button>
+            )}
             <button onClick={() => setEditCt(ct)} style={smallBtnStyle('neutral')} title="Modifier">✎</button>
             <button onClick={() => handleDelete(ct.id)} disabled={deleting === ct.id} style={{ ...smallBtnStyle('neutral'), color: '#DC2626', borderColor: '#FECACA' }} title="Supprimer">
               {deleting === ct.id ? '…' : '✕'}
@@ -658,7 +662,51 @@ function ExternalContactsTab() {
           }}
         />
       )}
+      {inviteCt && <InviteLinkModal contact={inviteCt} onClose={() => setInviteCt(null)} />}
     </>
+  )
+}
+
+function InviteLinkModal({ contact, onClose }: { contact: ExternalContact; onClose: () => void }) {
+  const [copied, setCopied] = useState(false)
+  const url = typeof window !== 'undefined'
+    ? `${window.location.origin}/signup?email=${encodeURIComponent(contact.email ?? '')}&name=${encodeURIComponent(contact.name)}&role=external`
+    : ''
+  const waMsg = `Bonjour ${contact.name.split(' ')[0]},\n\nVoici ton accès à Planify (chantier HSF) :\n${url}\n\nClique sur le lien et choisis ton mot de passe.`
+  const waLink = contact.phone
+    ? `https://wa.me/${contact.phone.replace(/[^\d]/g, '').replace(/^0/, '33')}?text=${encodeURIComponent(waMsg)}`
+    : null
+
+  async function copy() {
+    try { await navigator.clipboard.writeText(url); setCopied(true); setTimeout(() => setCopied(false), 1800) } catch {}
+  }
+
+  return (
+    <BottomModal title="Donner accès à Planify" onClose={onClose}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+        <div style={{ fontSize: 12, color: 'var(--muted)', lineHeight: 1.5 }}>
+          Envoie ce lien à <strong>{contact.name}</strong>. En cliquant dessus, {contact.name.split(' ')[0]} choisira son mot de passe et obtiendra un accès <strong>lecture seule</strong> au planning, briefings et notes.
+        </div>
+        <div style={{
+          padding: 10, background: 'var(--surface-2)', border: '1px solid var(--border)',
+          borderRadius: 8, fontSize: 11, fontFamily: "'DM Mono', monospace", color: 'var(--text)',
+          wordBreak: 'break-all', userSelect: 'all',
+        }}>{url}</div>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button onClick={copy} style={{
+            flex: 1, padding: '10px', borderRadius: 8, border: '1px solid var(--border)',
+            background: 'var(--surface-2)', color: 'var(--text)', fontSize: 12, fontWeight: 700, cursor: 'pointer',
+          }}>{copied ? '✓ Copié' : '📋 Copier le lien'}</button>
+          {waLink && (
+            <a href={waLink} target="_blank" rel="noreferrer" style={{
+              flex: 1, padding: '10px', borderRadius: 8, border: 'none', background: '#25D366',
+              color: '#fff', fontSize: 12, fontWeight: 700, cursor: 'pointer', textAlign: 'center',
+              textDecoration: 'none',
+            }}>📱 Envoyer via WhatsApp</a>
+          )}
+        </div>
+      </div>
+    </BottomModal>
   )
 }
 
@@ -670,13 +718,14 @@ function ExternalContactModal({ initial, onClose, onSaved }: {
   const [name, setName]     = useState(initial?.name ?? '')
   const [role, setRole]     = useState(initial?.role ?? '')
   const [phone, setPhone]   = useState(initial?.phone ?? '')
+  const [email, setEmail]   = useState(initial?.email ?? '')
   const [saving, setSaving] = useState(false)
   const [error, setError]   = useState<string | null>(null)
 
   async function handleSubmit() {
     if (!name.trim()) { setError('Le nom est requis'); return }
     setSaving(true); setError(null)
-    const payload = { name: name.trim(), role: role.trim() || null, phone: phone.trim() || null }
+    const payload = { name: name.trim(), role: role.trim() || null, phone: phone.trim() || null, email: email.trim() || null }
     if (initial) {
       const { error: err } = await supabase.from('external_contacts').update(payload).eq('id', initial.id)
       setSaving(false)
@@ -704,6 +753,10 @@ function ExternalContactModal({ initial, onClose, onSaved }: {
         <div>
           <label style={modalLabelStyle}>Téléphone WhatsApp</label>
           <input style={modalInputStyle} value={phone} onChange={e => setPhone(e.target.value)} placeholder="ex. 06 12 34 56 78" type="tel" />
+        </div>
+        <div>
+          <label style={modalLabelStyle}>Email (pour donner accès à Planify)</label>
+          <input style={modalInputStyle} value={email} onChange={e => setEmail(e.target.value)} placeholder="ex. marie@cabinet-moe.fr" type="email" />
         </div>
         {error && <div style={{ fontSize: 12, color: '#DC2626' }}>{error}</div>}
         <button onClick={handleSubmit} disabled={saving} style={submitBtnStyle}>{saving ? 'Enregistrement…' : (initial ? 'Enregistrer' : 'Ajouter')}</button>
