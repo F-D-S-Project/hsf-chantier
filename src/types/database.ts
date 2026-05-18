@@ -96,7 +96,7 @@ export interface ExternalContact {
 }
 
 export type NoteScope    = 'intervention' | 'libre'
-export type NoteStatus   = 'ouvert' | 'en_cours' | 'resolu' | 'clos'
+export type NoteStatus   = 'ouvert' | 'en_cours' | 'en_retard' | 'resolu' | 'termine'
 export type NoteCategory = 'info' | 'demande' | 'reserve' | 'incident' | 'rappel'
 
 export interface NoteAttachment {

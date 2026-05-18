@@ -15,11 +15,26 @@ const CATEGORIES: { value: NoteCategory; label: string; icon: string; color: str
 ]
 
 const STATUSES: { value: NoteStatus; label: string; color: string; bg: string }[] = [
-  { value: 'ouvert',   label: 'Ouvert',    color: '#2152C8', bg: '#EEF2FC' },
-  { value: 'en_cours', label: 'En cours',  color: '#D97706', bg: '#FEF3C7' },
-  { value: 'resolu',   label: 'Résolu',    color: '#16A34A', bg: '#DCFCE7' },
-  { value: 'clos',     label: 'Clos',      color: '#6B6860', bg: '#EFEDE8' },
+  { value: 'ouvert',    label: 'Ouvert',    color: '#2152C8', bg: '#EEF2FC' },
+  { value: 'en_cours',  label: 'En cours',  color: '#D97706', bg: '#FEF3C7' },
+  { value: 'en_retard', label: 'En retard', color: '#DC2626', bg: '#FEE2E2' },
+  { value: 'resolu',    label: 'Résolu',    color: '#16A34A', bg: '#DCFCE7' },
+  { value: 'termine',   label: 'Terminé',   color: '#6B6860', bg: '#EFEDE8' },
 ]
+
+function isLate(n: Note): boolean {
+  if (!n.due_date) return false
+  if (n.status === 'resolu' || n.status === 'termine') return false
+  return n.due_date < new Date().toISOString().slice(0, 10)
+}
+
+/** Effective status: auto-bump to 'en_retard' if due_date passed and not resolved */
+function effectiveNoteStatus(n: Note): NoteStatus {
+  if (n.status === 'ouvert' || n.status === 'en_cours') {
+    if (isLate(n)) return 'en_retard'
+  }
+  return n.status
+}
 
 const SCOPES: { value: 'all' | NoteScope; label: string }[] = [
   { value: 'all',          label: 'Toutes' },
@@ -71,6 +86,7 @@ interface Props {
 export default function NotesScreen({ interventions, zones, trades, companies, authorName, userRole, userCompany }: Props) {
   const [notes,     setNotes]     = useState<Note[]>([])
   const [loading,   setLoading]   = useState(true)
+  const [loadError, setLoadError] = useState<{ code?: string; message: string } | null>(null)
   const [scopeFilt, setScopeFilt] = useState<'all' | NoteScope>('all')
   const [statusFilt,setStatusFilt]= useState<NoteStatus | 'all'>('all')
   const [catFilt,   setCatFilt]   = useState<NoteCategory | 'all'>('all')
@@ -80,13 +96,26 @@ export default function NotesScreen({ interventions, zones, trades, companies, a
   const [query,     setQuery]     = useState('')
   const [showForm,  setShowForm]  = useState<{ mode: 'libre' | 'intervention'; iv?: Intervention } | null>(null)
   const [selected,  setSelected]  = useState<string | null>(null)
+  const [toast,        setToast]        = useState<{ msg: string; kind: 'success' | 'error' } | null>(null)
+  const [fabOpen,      setFabOpen]      = useState(false)
+  const [showIvPicker, setShowIvPicker] = useState(false)
+
+  function showToast(msg: string, kind: 'success' | 'error' = 'success') {
+    setToast({ msg, kind })
+    setTimeout(() => setToast(null), 3200)
+  }
 
   // Load + realtime
   useEffect(() => {
     let mounted = true
     supabase.from('notes').select('*').order('updated_at', { ascending: false }).then(({ data, error }) => {
       if (!mounted) return
-      if (error) console.error('notes load', error)
+      if (error) {
+        console.error('notes load', error)
+        setLoadError({ code: (error as { code?: string }).code, message: error.message })
+      } else {
+        setLoadError(null)
+      }
       setNotes((data ?? []) as Note[])
       setLoading(false)
     })
@@ -124,15 +153,20 @@ export default function NotesScreen({ interventions, zones, trades, companies, a
       if (trFilt.length   && !n.trade_codes.some(t => trFilt.includes(t))) return false
       if (zoneFilt.length && !n.zone_ids.some(z => zoneFilt.includes(z))) return false
       if (q && !(n.content.toLowerCase().includes(q) || (n.title ?? '').toLowerCase().includes(q) || n.author_name.toLowerCase().includes(q))) return false
-      // Subcontractor view: hide notes that don't concern me
+      // Subcontractor view: only show notes that concern me (by company, trade, zone or intervention's company)
       if (userRole === 'company' && userCompany) {
-        if (!n.company_codes.includes(userCompany)) return false
+        const myTradeIds = new Set(companies.filter(c => c.name === userCompany).map(c => c.trade_id).filter(Boolean) as string[])
+        const myIvIds    = new Set(interventions.filter(iv => iv.company === userCompany).map(iv => iv.id))
+        const concerns =
+          n.company_codes.includes(userCompany)
+          || n.trade_codes.some(t => myTradeIds.has(t))
+          || (!!n.intervention_id && myIvIds.has(n.intervention_id))
+        if (!concerns) return false
       }
       return true
     }).sort((a, b) => {
-      // Late (overdue + not resolved/clos) first
-      const aLate = !!a.due_date && a.due_date < new Date().toISOString().slice(0, 10) && a.status !== 'resolu' && a.status !== 'clos'
-      const bLate = !!b.due_date && b.due_date < new Date().toISOString().slice(0, 10) && b.status !== 'resolu' && b.status !== 'clos'
+      const aLate = isLate(a)
+      const bLate = isLate(b)
       if (aLate !== bLate) return aLate ? -1 : 1
       return (b.updated_at ?? '').localeCompare(a.updated_at ?? '')
     })
@@ -146,14 +180,39 @@ export default function NotesScreen({ interventions, zones, trades, companies, a
 
       {/* Toolbar */}
       <div style={{ padding: '10px 12px 6px', background: 'var(--surface)', borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8, position: 'relative' }}>
           <div style={{ fontSize: 17, fontWeight: 800, color: 'var(--text)', flex: 1 }}>Notes</div>
-          <button onClick={() => setShowForm({ mode: 'libre' })} style={{
+          <button onClick={() => setFabOpen(o => !o)} style={{
             padding: '7px 14px', borderRadius: 8, border: 'none', background: 'var(--primary)',
             color: '#fff', fontWeight: 700, fontSize: 12, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 5,
           }}>
-            <span style={{ fontSize: 16, lineHeight: 1 }}>+</span> Nouvelle note
+            <span style={{ fontSize: 16, lineHeight: 1 }}>+</span> Nouvelle note <span style={{ opacity: .6, fontSize: 10 }}>▾</span>
           </button>
+          {fabOpen && (
+            <>
+              <div onClick={() => setFabOpen(false)} style={{ position: 'fixed', inset: 0, zIndex: 90 }} />
+              <div style={{
+                position: 'absolute', top: 'calc(100% + 6px)', right: 0, zIndex: 91, minWidth: 240,
+                background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10,
+                boxShadow: 'var(--shadow-md)', overflow: 'hidden',
+              }}>
+                <button onClick={() => { setFabOpen(false); setShowForm({ mode: 'libre' }) }} style={fabItemStyle}>
+                  <div style={{ fontSize: 18 }}>📌</div>
+                  <div>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)' }}>Note libre</div>
+                    <div style={{ fontSize: 10.5, color: 'var(--muted)' }}>Info générale, rappel, consigne…</div>
+                  </div>
+                </button>
+                <button onClick={() => { setFabOpen(false); setShowIvPicker(true) }} style={{ ...fabItemStyle, borderTop: '1px solid var(--border)' }}>
+                  <div style={{ fontSize: 18 }}>📅</div>
+                  <div>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)' }}>Note ancrée à une tâche</div>
+                    <div style={{ fontSize: 10.5, color: 'var(--muted)' }}>Lier à une intervention du Gantt</div>
+                  </div>
+                </button>
+              </div>
+            </>
+          )}
         </div>
 
         {/* Search + scope */}
@@ -203,6 +262,8 @@ export default function NotesScreen({ interventions, zones, trades, companies, a
       <div style={{ flex: 1, overflowY: 'auto', padding: '10px 12px 80px', background: 'var(--surface-2)' }}>
         {loading ? (
           <div style={{ textAlign: 'center', color: 'var(--muted)', padding: 40, fontSize: 13 }}>Chargement…</div>
+        ) : loadError ? (
+          <MissingTableError err={loadError} />
         ) : filtered.length === 0 ? (
           <div style={{ textAlign: 'center', color: 'var(--muted)', padding: 40, fontSize: 13 }}>
             <div style={{ fontSize: 32, marginBottom: 8 }}>📝</div>
@@ -234,7 +295,31 @@ export default function NotesScreen({ interventions, zones, trades, companies, a
           companies={companies}
           authorName={authorName}
           onClose={() => setShowForm(null)}
+          onCreated={() => showToast('Note créée ✓', 'success')}
+          onError={msg => showToast(msg, 'error')}
         />
+      )}
+
+      {/* Intervention picker for anchored notes */}
+      {showIvPicker && (
+        <InterventionPicker
+          interventions={interventions}
+          zones={zones}
+          companies={companies}
+          onClose={() => setShowIvPicker(false)}
+          onPick={iv => { setShowIvPicker(false); setShowForm({ mode: 'intervention', iv }) }}
+        />
+      )}
+
+      {/* Toast */}
+      {toast && (
+        <div style={{
+          position: 'fixed', bottom: 80, left: '50%', transform: 'translateX(-50%)', zIndex: 200,
+          padding: '10px 18px', borderRadius: 10,
+          background: toast.kind === 'success' ? '#15803D' : '#B91C1C',
+          color: '#fff', fontSize: 13, fontWeight: 700,
+          boxShadow: '0 4px 18px rgba(0,0,0,.25)', animation: 'slideUp .22s ease',
+        }}>{toast.msg}</div>
       )}
 
       {/* Detail */}
@@ -264,13 +349,46 @@ function chipBtn(active: boolean, c?: string, bg?: string): React.CSSProperties 
   }
 }
 
+// ─── Missing table error state ──────────────────────────────────────────────
+
+function MissingTableError({ err }: { err: { code?: string; message: string } }) {
+  const isMissing = err.code === 'PGRST205' || err.message.toLowerCase().includes("could not find the table")
+  return (
+    <div style={{ background: 'var(--surface)', border: '1px solid #FECACA', borderRadius: 10, padding: 18, margin: 8 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+        <span style={{ fontSize: 22 }}>⚙️</span>
+        <div>
+          <div style={{ fontSize: 14, fontWeight: 800, color: '#7F1D1D' }}>
+            {isMissing ? 'Table « notes » absente' : 'Erreur de chargement'}
+          </div>
+          <div style={{ fontSize: 11, color: '#991B1B', marginTop: 2 }}>{err.message}</div>
+        </div>
+      </div>
+      {isMissing ? (
+        <div style={{ fontSize: 12, color: '#5A5855', lineHeight: 1.5 }}>
+          La table n’existe pas encore dans Supabase. Ouvre <strong>Supabase &gt; SQL Editor</strong> et lance le script <code style={{ background: 'var(--surface-2)', padding: '1px 5px', borderRadius: 4, fontSize: 11 }}>supabase/notes.sql</code> (et <code style={{ background: 'var(--surface-2)', padding: '1px 5px', borderRadius: 4, fontSize: 11 }}>supabase/notes_v2_statuses.sql</code> pour les statuts harmonisés). Puis recharge cette page.
+          <div style={{ marginTop: 10, padding: 8, background: 'var(--surface-2)', borderRadius: 6, fontSize: 11, color: 'var(--muted)' }}>
+            💡 Si tu viens de lancer le SQL, attends 30 s puis recharge — Supabase met parfois un instant à rafraîchir le cache PostgREST.
+          </div>
+        </div>
+      ) : (
+        <div style={{ fontSize: 12, color: 'var(--muted)' }}>Recharge la page ou vérifie ta connexion réseau.</div>
+      )}
+      <button onClick={() => window.location.reload()} style={{
+        marginTop: 12, padding: '7px 14px', borderRadius: 8, border: 'none',
+        background: 'var(--primary)', color: '#fff', fontSize: 12, fontWeight: 700, cursor: 'pointer',
+      }}>Recharger la page</button>
+    </div>
+  )
+}
+
 // ─── Note card ──────────────────────────────────────────────────────────────
 
 function NoteCard({ note, zones, companies, trades, interventions, replyCount, onClick }: {
   note: Note; zones: Zone[]; companies: Company[]; trades: Trade[]; interventions: Intervention[]; replyCount: number; onClick: () => void
 }) {
   const cat  = catMeta(note.category)
-  const stat = statusMeta(note.status)
+  const stat = statusMeta(effectiveNoteStatus(note))
   const due  = fmtDue(note.due_date)
   const ivLink = note.intervention_id ? interventions.find(i => i.id === note.intervention_id) : null
   const zoneList = note.zone_ids.map(id => zones.find(z => z.id === id)?.short ?? id).filter(Boolean)
@@ -345,12 +463,14 @@ const anchorStyle: React.CSSProperties = {
 
 // ─── Form modal (create note) ───────────────────────────────────────────────
 
-export function NoteFormModal({ mode, iv, zones, trades, companies, authorName, onClose }: {
+export function NoteFormModal({ mode, iv, zones, trades, companies, authorName, onClose, onCreated, onError }: {
   mode: 'libre' | 'intervention'
   iv?: Intervention
   zones: Zone[]; trades: Trade[]; companies: Company[]
   authorName: string
   onClose: () => void
+  onCreated?: (note: Note) => void
+  onError?:   (msg: string) => void
 }) {
   const [title,    setTitle]    = useState('')
   const [content,  setContent]  = useState('')
@@ -363,7 +483,9 @@ export function NoteFormModal({ mode, iv, zones, trades, companies, authorName, 
   const [error,    setError]    = useState<string | null>(null)
 
   async function submit() {
-    if (!content.trim()) { setError('Le contenu est requis.'); return }
+    const trimmed = content.trim()
+    if (trimmed.length < 3)    { setError('Le contenu doit faire au moins 3 caractères.'); return }
+    if (trimmed.length > 5000) { setError('Le contenu est trop long (5000 caractères max).'); return }
     const hasAnchor = mode === 'intervention' || coCodes.length > 0 || trCodes.length > 0 || zoneIds.length > 0
     if (!hasAnchor) { setError('Au moins un ancrage (entreprise, métier ou zone) est requis.'); return }
 
@@ -372,7 +494,7 @@ export function NoteFormModal({ mode, iv, zones, trades, companies, authorName, 
     const payload = {
       author_name: authorName,
       title: title.trim() || null,
-      content: content.trim(),
+      content: trimmed,
       intervention_id: iv?.id ?? null,
       zone_ids:      zoneIds,
       company_codes: coCodes,
@@ -384,9 +506,15 @@ export function NoteFormModal({ mode, iv, zones, trades, companies, authorName, 
       parent_id: null,
       attachments: [],
     }
-    const { error: err } = await supabase.from('notes').insert([payload])
+    const { data, error: err } = await supabase.from('notes').insert([payload]).select().single()
     setSaving(false)
-    if (err) { setError(err.message); return }
+    if (err || !data) {
+      const msg = err?.message ?? 'Erreur inconnue'
+      setError(msg)
+      onError?.(msg)
+      return
+    }
+    onCreated?.(data as Note)
     onClose()
   }
 
@@ -679,7 +807,89 @@ function NoteDetail({ note, thread, zones, trades, companies, interventions, aut
   )
 }
 
+// ─── Intervention picker (anchored note creation) ──────────────────────────
+
+function InterventionPicker({ interventions, zones, companies, onClose, onPick }: {
+  interventions: Intervention[]
+  zones: Zone[]
+  companies: Company[]
+  onClose: () => void
+  onPick: (iv: Intervention) => void
+}) {
+  const [q, setQ] = useState('')
+  const ql = q.trim().toLowerCase()
+  const visible = useMemo(() => {
+    return interventions
+      .filter(iv => iv.status !== 'termine')
+      .filter(iv => !ql
+        || iv.task?.toLowerCase().includes(ql)
+        || (iv.task_number ?? '').toLowerCase().includes(ql)
+        || (iv.company ?? '').toLowerCase().includes(ql))
+      .sort((a, b) => (a.start_date ?? '').localeCompare(b.start_date ?? ''))
+      .slice(0, 100)
+  }, [interventions, ql])
+
+  return (
+    <>
+      <div onClick={onClose} style={modalBackdrop} />
+      <div style={{ ...modalSheet, maxHeight: '85vh' }}>
+        <div style={{ display: 'flex', justifyContent: 'center', padding: '10px 0 6px' }}>
+          <div style={{ width: 36, height: 4, borderRadius: 2, background: 'var(--border)' }} />
+        </div>
+        <div style={{ padding: '0 16px 12px', display: 'flex', alignItems: 'center', gap: 8 }}>
+          <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--text)', flex: 1 }}>
+            Choisir une intervention à ancrer
+          </div>
+          <button onClick={onClose} style={{ width: 28, height: 28, borderRadius: 6, border: '1px solid var(--border)', background: 'var(--surface-2)', cursor: 'pointer', fontSize: 14 }}>✕</button>
+        </div>
+        <div style={{ padding: '0 16px 8px' }}>
+          <input
+            autoFocus value={q} onChange={e => setQ(e.target.value)}
+            placeholder="Rechercher par tâche, n° ou entreprise…"
+            style={inp}
+          />
+        </div>
+        <div style={{ overflowY: 'auto', padding: '0 8px 16px' }}>
+          {visible.length === 0 ? (
+            <div style={{ padding: 30, textAlign: 'center', color: 'var(--muted)', fontSize: 12 }}>
+              Aucune intervention trouvée
+            </div>
+          ) : visible.map(iv => {
+            const z = zones.find(z => z.id === iv.zone)
+            const co = companies.find(c => c.name === iv.company)
+            return (
+              <button key={iv.id} onClick={() => onPick(iv)} style={{
+                width: '100%', textAlign: 'left', padding: '8px 10px', marginBottom: 4,
+                background: 'var(--surface-2)', border: '1px solid var(--border)',
+                borderRadius: 8, cursor: 'pointer', display: 'flex', gap: 8, alignItems: 'center',
+              }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 12.5, fontWeight: 700, color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {iv.task}
+                  </div>
+                  <div style={{ fontSize: 10, color: 'var(--muted)', marginTop: 2, display: 'flex', gap: 6 }}>
+                    {iv.task_number && <span style={{ fontFamily: "'DM Mono', monospace" }}>{iv.task_number}</span>}
+                    {z && <span>· {z.short}</span>}
+                    {iv.company && <span>· {iv.company}{co?.trade_id ? '' : ''}</span>}
+                    {iv.start_date && <span>· {iv.start_date.slice(5, 10).replace('-', '/')}</span>}
+                  </div>
+                </div>
+                <span style={{ fontSize: 18, color: 'var(--primary)' }}>›</span>
+              </button>
+            )
+          })}
+        </div>
+      </div>
+    </>
+  )
+}
+
 // ─── Shared styles ──────────────────────────────────────────────────────────
+
+const fabItemStyle: React.CSSProperties = {
+  display: 'flex', alignItems: 'center', gap: 12, padding: '12px 14px',
+  background: 'transparent', border: 'none', cursor: 'pointer', textAlign: 'left', width: '100%',
+}
 
 const modalBackdrop: React.CSSProperties = {
   position: 'fixed', inset: 0, background: 'rgba(0,0,0,.45)',
