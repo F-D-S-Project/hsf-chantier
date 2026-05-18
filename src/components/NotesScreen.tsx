@@ -2152,7 +2152,13 @@ function ResendModal({ note, attachments, companies, authorName, onClose, onToas
     // 1) Cloche
     const cloches = enabled.filter(l => l.channel === 'cloche')
     for (const l of cloches) {
-      const payload: Record<string, unknown> = {
+      const isExternal = !!l.email
+      const payload: Record<string, unknown> = isExternal ? {
+        recipient_role: 'external',
+        recipient_email: l.email,
+        task_name: note.title?.slice(0, 80) ?? note.content.slice(0, 60) ?? '—',
+        message: `📢 Rappel : ${authorName}`,
+      } : {
         recipient_role: 'company',
         recipient_company: l.companyName ?? '',
         task_name: note.title?.slice(0, 80) ?? note.content.slice(0, 60) ?? '—',
@@ -2163,7 +2169,7 @@ function ResendModal({ note, attachments, companies, authorName, onClose, onToas
       await supabase.from('note_send_log').insert([{
         note_id: note.id,
         channel: 'cloche',
-        recipient_label: l.companyName ?? l.label,
+        recipient_label: isExternal ? l.label.replace(/^🔔 Notif Planify → /, '') : (l.companyName ?? l.label),
         recipient_company: l.companyName ?? null,
         recipient_phone: null,
         status: r.error ? 'failed' : 'sent',
