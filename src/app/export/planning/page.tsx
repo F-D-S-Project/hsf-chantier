@@ -246,12 +246,22 @@ export default function ExportPlanningPage() {
         @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700;800;900&family=DM+Mono:wght@400;500&display=swap');
         * { box-sizing: border-box; margin: 0; padding: 0; }
         html, body { font-family: 'DM Sans', sans-serif; background: #ECEAE5; }
+        .print-page {
+          width: 277mm;
+          margin: 0 auto 28px;
+          background: #fff;
+          border-radius: 10px;
+          box-shadow: 0 2px 20px rgba(0,0,0,.09);
+          overflow: hidden;
+          page-break-after: always;
+          page-break-inside: avoid;
+        }
+        .print-page:last-child { page-break-after: auto; }
         @media print {
-          @page { size: A4 landscape; margin: 0.7cm 0.9cm; }
+          @page { size: A4 landscape; margin: 0.7cm 1cm; }
           html, body { background: white !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
           .no-print { display: none !important; }
-          .print-page { box-shadow: none !important; border-radius: 0 !important; margin: 0 !important; page-break-after: always; }
-          .print-page:last-child { page-break-after: auto; }
+          .print-page { box-shadow: none !important; border-radius: 0 !important; margin: 0 !important; width: 100% !important; }
         }
       `}</style>
 
@@ -283,7 +293,7 @@ export default function ExportPlanningPage() {
               background: 'rgba(255,255,255,.1)', color: 'rgba(255,255,255,.7)', fontSize: 14, fontWeight: 700, opacity: startOffset === 0 ? .3 : 1,
             }}>‹</button>
             <span style={{ fontSize: 11, opacity: .6, minWidth: 65, textAlign: 'center' }}>
-              {startOffset === 0 ? 'Actuelle' : `S+${startOffset}`}{weekCount > 1 ? `→S+${startOffset + weekCount - 1}` : ''}
+              {startOffset === 0 ? 'Actuelle' : `S+${startOffset}`}{weekCount > 1 ? ` → S+${startOffset + weekCount - 1}` : ''}
             </span>
             <button onClick={() => setStartOffset(o => o + 1)} style={{
               width: 26, height: 26, borderRadius: 6, border: 'none', cursor: 'pointer',
@@ -300,7 +310,7 @@ export default function ExportPlanningPage() {
       </div>
 
       {/* ── Pages ───────────────────────────────────────────────────────── */}
-      <div style={{ padding: '20px 20px 40px', background: '#ECEAE5', minHeight: 'calc(100vh - 50px)' }}>
+      <div style={{ padding: '24px 20px 48px', background: '#ECEAE5', minHeight: 'calc(100vh - 50px)' }}>
         {weeks.map((weekDays, wi) => {
           const weekRange  = fmtDateRange(weekDays)
           const totalIvs   = interventions.filter(iv => {
@@ -315,11 +325,7 @@ export default function ExportPlanningPage() {
           )
 
           return (
-            <div key={wi} className="print-page" style={{
-              background: '#fff', borderRadius: 10,
-              boxShadow: '0 2px 20px rgba(0,0,0,.09)',
-              marginBottom: 24, overflow: 'hidden',
-            }}>
+            <div key={wi} className="print-page">
 
               {/* Page header */}
               <div style={{
