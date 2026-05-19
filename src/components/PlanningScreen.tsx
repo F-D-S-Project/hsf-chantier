@@ -754,8 +754,8 @@ export default function PlanningScreen({ interventions, zones, trades, companies
                             />
                           ))}
                         </div>
-                        {/* Gantt bars */}
-                        <div style={{ position: 'relative', zIndex: 1, minHeight: 36 }}>
+                        {/* Gantt bars — wrapper sans clic ; les bars activent leur propre pointer-events */}
+                        <div style={{ position: 'relative', zIndex: 1, minHeight: 36, pointerEvents: 'none' }}>
                           {Array.from({ length: Math.max(laneCount, 1) }, (_, lane) => (
                             <PlanLaneRow
                               key={lane}
