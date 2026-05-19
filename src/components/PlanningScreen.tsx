@@ -208,11 +208,9 @@ interface AddTaskModalProps {
 
 function AddTaskModal({ zones, trades, companies, defaultZone, defaultDate, onClose, onAdd }: AddTaskModalProps) {
   const today = todayStr()
-  const firstTradeId = trades[0]?.id ?? ''
-  const firstCompany = companies.find(c => companyTradeIds(c).includes(firstTradeId))?.name ?? ''
-  const [zoneId,    setZoneId]    = useState(defaultZone ?? zones[0]?.id ?? '')
-  const [tradeId,   setTradeId]   = useState(firstTradeId)
-  const [company,   setCompany]   = useState(firstCompany)
+  const [zoneId,    setZoneId]    = useState(defaultZone ?? '')
+  const [tradeId,   setTradeId]   = useState('')
+  const [company,   setCompany]   = useState('')
   const [task,      setTask]      = useState('')
   const [startDate, setStartDate] = useState(defaultDate ?? today)
   const [endDate,   setEndDate]   = useState(defaultDate ?? today)
@@ -221,12 +219,14 @@ function AddTaskModal({ zones, trades, companies, defaultZone, defaultDate, onCl
 
   function handleTradeChange(newTradeId: string) {
     setTradeId(newTradeId)
-    const autoCompany = companies.find(c => companyTradeIds(c).includes(newTradeId))?.name ?? ''
-    setCompany(autoCompany)
+    setCompany('')
   }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
+    if (!zoneId)     { setError('Sélectionne une zone.'); return }
+    if (!tradeId)    { setError('Sélectionne un corps de métier.'); return }
+    if (!company)    { setError('Sélectionne une entreprise.'); return }
     if (!task.trim()) { setError('La description est requise.'); return }
     setSaving(true)
     setError(null)
@@ -287,6 +287,7 @@ function AddTaskModal({ zones, trades, companies, defaultZone, defaultDate, onCl
             <div>
               <label style={modalLabelStyle}>Zone</label>
               <select value={zoneId} onChange={e => setZoneId(e.target.value)} style={modalSelectStyle}>
+                <option value="">— Sélectionner —</option>
                 {zones.map(z => <option key={z.id} value={z.id}>{z.name} ({z.short})</option>)}
               </select>
             </div>
@@ -295,6 +296,7 @@ function AddTaskModal({ zones, trades, companies, defaultZone, defaultDate, onCl
             <div>
               <label style={modalLabelStyle}>Corps de métier</label>
               <select value={tradeId} onChange={e => handleTradeChange(e.target.value)} style={modalSelectStyle}>
+                <option value="">— Sélectionner —</option>
                 {trades.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
               </select>
             </div>
