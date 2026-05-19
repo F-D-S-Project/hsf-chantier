@@ -302,13 +302,42 @@ function AddTaskModal({ zones, trades, companies, defaultZone, defaultDate, onCl
             {/* Entreprise */}
             <div>
               <label style={modalLabelStyle}>Entreprise</label>
-              <input
-                type="text"
-                value={company}
-                onChange={e => setCompany(e.target.value)}
-                placeholder="Nom de l'entreprise"
-                style={modalInputStyle}
-              />
+              {(() => {
+                const matching = companies.filter(c => companyTradeIds(c).includes(tradeId))
+                const others   = companies.filter(c => !companyTradeIds(c).includes(tradeId))
+                const known    = company && companies.some(c => c.name === company)
+                return (
+                  <>
+                    <select
+                      value={known ? company : (company ? '__custom__' : '')}
+                      onChange={e => {
+                        if (e.target.value === '__custom__') { setCompany(''); return }
+                        setCompany(e.target.value)
+                      }}
+                      style={modalSelectStyle}
+                    >
+                      <option value="">— Sélectionner —</option>
+                      {matching.length > 0 && (
+                        <optgroup label={`Sur ce corps de métier (${matching.length})`}>
+                          {matching.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
+                        </optgroup>
+                      )}
+                      {others.length > 0 && (
+                        <optgroup label="Autres entreprises">
+                          {others.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
+                        </optgroup>
+                      )}
+                      <option value="__custom__">✎ Autre (saisie libre)…</option>
+                    </select>
+                    {!known && company !== '' && (
+                      <input
+                        type="text" value={company} onChange={e => setCompany(e.target.value)}
+                        placeholder="Nom de l'entreprise" style={{ ...modalInputStyle, marginTop: 6 }} autoFocus
+                      />
+                    )}
+                  </>
+                )
+              })()}
             </div>
 
             {/* Description */}
@@ -425,6 +454,7 @@ export default function PlanningScreen({ interventions, zones, trades, companies
   const selectedIv = selectedId ? interventions.find(iv => iv.id === selectedId) ?? null : null
 
   async function handleCellClick(zoneId: string, dateStr: string) {
+    if (readOnly) return
     if (moveMode) {
       const { iv, mode } = moveMode
       const duration = daysBetween(iv.start_date ?? dateStr, iv.end_date ?? iv.start_date ?? dateStr)
@@ -712,10 +742,11 @@ export default function PlanningScreen({ interventions, zones, trades, companies
                             <div
                               key={d}
                               onClick={() => handleCellClick(zone.id, d)}
+                              title={readOnly ? undefined : (moveMode ? 'Déplacer ici' : 'Cliquer pour ajouter une tâche')}
                               style={{
                                 borderLeft: `${di > 0 && new Date(d + 'T12:00:00').getDay() === 1 ? 2 : 1}px solid var(--border)`,
                                 background: cellBg(d, zone, today),
-                                cursor: moveMode ? 'crosshair' : 'default',
+                                cursor: readOnly ? 'default' : (moveMode ? 'crosshair' : 'pointer'),
                                 minHeight: 36,
                               }}
                             />
