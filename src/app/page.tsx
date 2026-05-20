@@ -209,6 +209,7 @@ export default function PlanifyApp() {
               zones={zones} trades={trades} companies={companies}
               authorName={authorName}
               onUpdate={handleUpdate}
+              onOpenNote={noteId => { setCoScreen('notes'); setPendingNoteId(noteId) }}
             />
           )}
           {coScreen === 'planning' && (
@@ -219,6 +220,7 @@ export default function PlanifyApp() {
               authorName={authorName}
               userRole={userRole} userCompany={userCompany}
               onUpdate={handleUpdate} onAdd={handleAdd}
+              onOpenNote={noteId => { setCoScreen('notes'); setPendingNoteId(noteId) }}
             />
           )}
           {coScreen === 'notes' && (
@@ -274,7 +276,7 @@ export default function PlanifyApp() {
         </header>
         <main style={{ flex: 1, overflow: 'hidden', position: 'relative' }}>
           {extScreen === 'dashboard' && (
-            <DashboardScreen zones={zones} interventions={interventions} trades={trades} companies={companies} authorName={authorName} onUpdate={handleUpdate} visibleBlocks={extPerms} userRole={userRole} userCompany={userCompany} />
+            <DashboardScreen zones={zones} interventions={interventions} trades={trades} companies={companies} authorName={authorName} onUpdate={handleUpdate} visibleBlocks={extPerms} userRole={userRole} userCompany={userCompany} onOpenNote={noteId => { setExtScreen('notes'); setPendingNoteId(noteId) }} />
           )}
           {extScreen === 'planning' && (
             <PlanningScreen
@@ -282,6 +284,7 @@ export default function PlanifyApp() {
               readOnly authorName={authorName}
               userRole={userRole} userCompany={userCompany}
               onUpdate={handleUpdate} onAdd={handleAdd}
+              onOpenNote={noteId => { setExtScreen('notes'); setPendingNoteId(noteId) }}
             />
           )}
           {extScreen === 'briefings' && (
@@ -322,9 +325,9 @@ export default function PlanifyApp() {
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
       <AppHeader screen={screen} onNavigate={setScreen} interventions={interventions} onLogout={handleLogout} unreadCount={unreadCount} onOpenNotifs={() => { setShowNotifs(true); handleMarkAllRead() }} authorName={authorName} />
       <main style={{ flex: 1, overflow: 'hidden', position: 'relative' }}>
-        {screen === 'dashboard' && <DashboardScreen zones={zones} interventions={interventions} trades={trades} companies={companies} authorName={authorName} onUpdate={handleUpdate} userRole={userRole} userCompany={userCompany} />}
-        {screen === 'list' && <ListScreen interventions={interventions} zones={zones} trades={trades} onUpdate={handleUpdate} />}
-        {screen === 'planning' && <PlanningScreen interventions={interventions} zones={zones} trades={trades} companies={companies} userRole={userRole} userCompany={userCompany} onUpdate={handleUpdate} onAdd={handleAdd} />}
+        {screen === 'dashboard' && <DashboardScreen zones={zones} interventions={interventions} trades={trades} companies={companies} authorName={authorName} onUpdate={handleUpdate} userRole={userRole} userCompany={userCompany} onOpenNote={noteId => { setScreen('notes'); setPendingNoteId(noteId) }} />}
+        {screen === 'list' && <ListScreen interventions={interventions} zones={zones} trades={trades} onUpdate={handleUpdate} onOpenNote={noteId => { setScreen('notes'); setPendingNoteId(noteId) }} />}
+        {screen === 'planning' && <PlanningScreen interventions={interventions} zones={zones} trades={trades} companies={companies} userRole={userRole} userCompany={userCompany} onUpdate={handleUpdate} onAdd={handleAdd} onOpenNote={noteId => { setScreen('notes'); setPendingNoteId(noteId) }} />}
         {screen === 'notes' && <NotesScreen interventions={interventions} zones={zones} trades={trades} companies={companies} authorName={authorName} userId={userId ?? undefined} userRole={userRole} userCompany={userCompany ?? undefined} initialNoteId={pendingNoteId} onInitialNoteOpened={() => setPendingNoteId(null)} />}
         {screen === 'briefings' && <BriefingsScreen interventions={interventions} zones={zones} trades={trades} companies={companies} />}
         {screen === 'settings' && <SettingsScreen zones={zones} trades={trades} companies={companies} onZonesChange={setZones} onTradesChange={setTrades} onCompaniesChange={setCompanies} />}
@@ -586,12 +589,13 @@ function BottomNav({ screen, onNavigate, notesUnread = 0 }: { screen: Screen; on
 
 // ─── Dashboard ────────────────────────────────────────────────────────────────
 
-function DashboardScreen({ zones, interventions, trades, companies, authorName, onUpdate, visibleBlocks, userRole = 'admin', userCompany = null }: {
+function DashboardScreen({ zones, interventions, trades, companies, authorName, onUpdate, visibleBlocks, userRole = 'admin', userCompany = null, onOpenNote }: {
   zones: Zone[]; interventions: Intervention[]; trades: Trade[]; companies: Company[]; authorName: string
   onUpdate: (id: string, patch: Partial<Intervention>) => void
   visibleBlocks?: { sante: boolean; taches: boolean; trades: boolean; zones: boolean }
   userRole?: 'admin' | 'company' | 'external'
   userCompany?: string | null
+  onOpenNote?: (noteId: string) => void
 }) {
   const show = visibleBlocks ?? { sante: true, taches: true, trades: true, zones: true }
   const [selectedId, setSelectedId]       = useState<string | null>(null)
@@ -870,6 +874,7 @@ function DashboardScreen({ zones, interventions, trades, companies, authorName, 
           userCompany={userCompany}
           onClose={() => setSelectedId(null)}
           onUpdate={(patch) => { onUpdate(selectedIv.id, patch); setSelectedId(null) }}
+          onOpenNote={onOpenNote}
         />
       )}
 

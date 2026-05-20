@@ -24,6 +24,7 @@ interface Props {
   userCompany?: string | null
   onUpdate: (id: string, patch: Partial<Intervention>) => void
   onAdd: (iv: Intervention) => void
+  onOpenNote?: (noteId: string) => void
 }
 
 // ─── Date helpers ─────────────────────────────────────────────────────────────
@@ -424,7 +425,7 @@ const modalSelectStyle: React.CSSProperties = {
 
 type MoveMode = { iv: Intervention; mode: 'move' | 'dup' } | null
 
-export default function PlanningScreen({ interventions, zones, trades, companies, highlightCompany, readOnly, authorName, userRole = 'admin', userCompany = null, onUpdate, onAdd }: Props) {
+export default function PlanningScreen({ interventions, zones, trades, companies, highlightCompany, readOnly, authorName, userRole = 'admin', userCompany = null, onUpdate, onAdd, onOpenNote }: Props) {
   const [weekOffset, setWeekOffset] = useState(0)
   const [viewMode, setViewMode]     = useState<ViewMode>('1s')
   const [zoneFilter, setZoneFilter] = useState<string[]>([])
@@ -799,6 +800,7 @@ export default function PlanningScreen({ interventions, zones, trades, companies
           authorName={authorName}
           userRole={userRole}
           userCompany={userCompany}
+          onOpenNote={onOpenNote}
           onClose={() => setSelectedId(null)}
           onUpdate={(patch) => {
             onUpdate(selectedIv.id, patch)

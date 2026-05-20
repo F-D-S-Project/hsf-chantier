@@ -17,6 +17,7 @@ interface Props {
   companies: Company[]
   authorName?: string
   onUpdate: (id: string, patch: Partial<Intervention>) => void
+  onOpenNote?: (noteId: string) => void
 }
 
 const FR_DAYS  = ['Dim','Lun','Mar','Mer','Jeu','Ven','Sam']
@@ -54,7 +55,7 @@ function weekLabel(offset: number): string {
   return `${fmtShort(mon)} – ${fmtShort(fri)}`
 }
 
-export default function CompanyScreen({ companyName, interventions, zones, trades, companies, authorName, onUpdate }: Props) {
+export default function CompanyScreen({ companyName, interventions, zones, trades, companies, authorName, onUpdate, onOpenNote }: Props) {
   const [selectedId, setSelectedId]       = useState<string | null>(null)
   const [selectedWeeks, setSelectedWeeks] = useState<number[]>([0])
   const [selectedDay, setSelectedDay]     = useState<string | null>(null)
@@ -351,6 +352,7 @@ export default function CompanyScreen({ companyName, interventions, zones, trade
           authorName={authorName}
           userRole="company"
           userCompany={companyName}
+          onOpenNote={onOpenNote}
           onClose={() => setSelectedId(null)}
           onUpdate={(patch) => { onUpdate(selectedIv.id, patch); setSelectedId(null) }}
         />

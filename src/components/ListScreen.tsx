@@ -15,11 +15,12 @@ interface Props {
   zones: Zone[]
   trades: Trade[]
   onUpdate: (id: string, patch: Partial<Intervention>) => void
+  onOpenNote?: (noteId: string) => void
 }
 
 type FilterStatus = Status | 'all'
 
-export default function ListScreen({ interventions, zones, trades, onUpdate }: Props) {
+export default function ListScreen({ interventions, zones, trades, onUpdate, onOpenNote }: Props) {
   const [weekOffset, setWeekOffset]   = useState(0)
   const [filterStatus, setFilterStatus] = useState<FilterStatus>('all')
   const [filterTrade, setFilterTrade]   = useState<string>('all')
@@ -202,6 +203,7 @@ export default function ListScreen({ interventions, zones, trades, onUpdate }: P
           trades={trades}
           allInterventions={interventions}
           userRole="admin"
+          onOpenNote={onOpenNote}
           onClose={() => setSelectedId(null)}
           onUpdate={(patch) => {
             onUpdate(selectedIv.id, patch)

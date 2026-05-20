@@ -19,6 +19,14 @@ interface NoteEntry {
   created_at: string
 }
 
+interface TaskNoteSummary {
+  id: string
+  title: string | null
+  content: string
+  author_name: string
+  created_at: string
+}
+
 interface Props {
   iv: Intervention
   zones: Zone[]
@@ -33,23 +41,36 @@ interface Props {
   onUpdate: (patch: Partial<Intervention>) => void
   onStartMove?: () => void
   onStartDuplicate?: () => void
+  onOpenNote?: (noteId: string) => void
 }
 
-export default function TaskDetail({ iv, zones, trades, companies = [], allInterventions, readOnly, authorName, userRole = 'admin', userCompany = null, onClose, onUpdate, onStartMove, onStartDuplicate }: Props) {
+export default function TaskDetail({ iv, zones, trades, companies = [], allInterventions, readOnly, authorName, userRole = 'admin', userCompany = null, onClose, onUpdate, onStartMove, onStartDuplicate, onOpenNote }: Props) {
   const [showNoteForm, setShowNoteForm] = useState(false)
+  const [showNotesList, setShowNotesList] = useState(false)
+  const [taskNotes, setTaskNotes] = useState<TaskNoteSummary[]>([])
   const [noteCount,    setNoteCount]    = useState<number | null>(null)
 
   useEffect(() => {
-    supabase.from('notes').select('id', { count: 'exact', head: true }).eq('intervention_id', iv.id).is('deleted_at', null).then(({ count, error }) => {
-      if (error) {
-        // Fallback for v1 schema (no deleted_at column)
-        if ((error as { code?: string }).code === '42703') {
-          supabase.from('notes').select('id', { count: 'exact', head: true }).eq('intervention_id', iv.id).then(({ count: c2 }) => setNoteCount(c2 ?? 0))
+    supabase
+      .from('notes')
+      .select('id, title, content, author_name, created_at')
+      .eq('intervention_id', iv.id)
+      .is('deleted_at', null)
+      .is('parent_id', null)
+      .order('created_at', { ascending: false })
+      .then(({ data, error }) => {
+        if (error) {
+          if ((error as { code?: string }).code === '42703') {
+            supabase.from('notes').select('id, title, content, author_name, created_at').eq('intervention_id', iv.id).order('created_at', { ascending: false }).then(({ data: d2 }) => {
+              const rows = (d2 ?? []) as TaskNoteSummary[]
+              setTaskNotes(rows); setNoteCount(rows.length)
+            })
+          }
+          return
         }
-        return
-      }
-      setNoteCount(count ?? 0)
-    })
+        const rows = (data ?? []) as TaskNoteSummary[]
+        setTaskNotes(rows); setNoteCount(rows.length)
+      })
   }, [iv.id])
   const [saving, setSaving]   = useState(false)
   const [editing, setEditing] = useState(false)
@@ -365,8 +386,8 @@ export default function TaskDetail({ iv, zones, trades, companies = [], allInter
             <button onClick={onClose} style={{ border: 'none', background: 'var(--surface-2)', borderRadius: 8, width: 32, height: 32, cursor: 'pointer', fontSize: 18, color: 'var(--muted)' }}>×</button>
             {!readOnly && <button onClick={() => setEditing(e => !e)} style={{ border: `1px solid ${editing ? 'var(--primary)' : 'var(--border)'}`, background: editing ? 'var(--primary-l)' : 'var(--surface-2)', borderRadius: 8, width: 32, height: 32, cursor: 'pointer', fontSize: 13, color: editing ? 'var(--primary)' : 'var(--muted)' }}>✎</button>}
             <button
-              onClick={() => setShowNoteForm(true)}
-              title={noteCount && noteCount > 0 ? `${noteCount} note${noteCount > 1 ? 's' : ''} sur cette tâche — cliquer pour ajouter` : 'Créer une note sur cette tâche'}
+              onClick={() => { if (noteCount && noteCount > 0) setShowNotesList(true); else setShowNoteForm(true) }}
+              title={noteCount && noteCount > 0 ? `${noteCount} note${noteCount > 1 ? 's' : ''} sur cette tâche — cliquer pour voir` : 'Créer une note sur cette tâche'}
               style={{
                 position: 'relative',
                 border: '1px solid #DDD6FE',
@@ -689,6 +710,82 @@ export default function TaskDetail({ iv, zones, trades, companies = [], allInter
           onClose={() => setShowNoteForm(false)}
         />
       )}
+
+      {showNotesList && (
+        <TaskNotesPicker
+          notes={taskNotes}
+          onClose={() => setShowNotesList(false)}
+          onPick={(id) => {
+            setShowNotesList(false)
+            if (onOpenNote) { onOpenNote(id); onClose() }
+          }}
+          onCreate={() => { setShowNotesList(false); setShowNoteForm(true) }}
+          canOpenDetail={!!onOpenNote}
+        />
+      )}
+    </>
+  )
+}
+
+function TaskNotesPicker({ notes, onClose, onPick, onCreate, canOpenDetail }: {
+  notes: TaskNoteSummary[]
+  onClose: () => void
+  onPick: (id: string) => void
+  onCreate: () => void
+  canOpenDetail: boolean
+}) {
+  return (
+    <>
+      <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.45)', zIndex: 110, backdropFilter: 'blur(2px)' }} />
+      <div style={{
+        position: 'fixed', bottom: 0, left: 0, right: 0, zIndex: 111,
+        background: 'var(--surface)', borderRadius: '16px 16px 0 0',
+        boxShadow: '0 -8px 32px rgba(0,0,0,.18)',
+        maxHeight: '75vh', display: 'flex', flexDirection: 'column',
+        animation: 'slideUp .22s ease-out',
+      }}>
+        <div style={{ padding: '12px 0 0', display: 'flex', justifyContent: 'center' }}>
+          <div style={{ width: 36, height: 4, borderRadius: 2, background: 'var(--border)' }} />
+        </div>
+        <div style={{ padding: '10px 16px 12px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <span style={{ fontSize: 15, fontWeight: 700, color: 'var(--text)' }}>
+            Notes sur cette tâche ({notes.length})
+          </span>
+          <button onClick={onClose} style={{ border: 'none', background: 'var(--surface-2)', borderRadius: 8, width: 30, height: 30, cursor: 'pointer', fontSize: 16, color: 'var(--muted)' }}>×</button>
+        </div>
+        <div style={{ flex: 1, overflowY: 'auto', padding: '10px 16px 16px' }}>
+          {notes.length === 0 ? (
+            <div style={{ textAlign: 'center', color: 'var(--muted)', fontSize: 13, padding: '24px 0' }}>Aucune note pour cette tâche.</div>
+          ) : notes.map(n => (
+            <div key={n.id}
+              onClick={() => onPick(n.id)}
+              title={canOpenDetail ? 'Cliquer pour ouvrir le détail' : 'Détail des notes accessible depuis l’écran Notes'}
+              style={{
+                padding: '11px 12px', marginBottom: 8, borderRadius: 'var(--r)',
+                background: 'var(--surface-2)', border: '1px solid var(--border)',
+                borderLeft: '3px solid #7C3AED',
+                cursor: canOpenDetail ? 'pointer' : 'default',
+              }}>
+              <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)', lineHeight: 1.4, marginBottom: 3 }}>
+                {n.title || (n.content?.slice(0, 80) ?? '—')}
+              </div>
+              <div style={{ fontSize: 11, color: 'var(--muted)', fontFamily: "'DM Mono', monospace" }}>
+                {n.author_name} · {new Date(n.created_at).toLocaleDateString('fr-FR', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}
+              </div>
+            </div>
+          ))}
+          <button
+            onClick={onCreate}
+            style={{
+              width: '100%', marginTop: 8, padding: '11px',
+              borderRadius: 'var(--r-sm)', border: '1px dashed var(--primary)',
+              background: 'transparent', color: 'var(--primary)',
+              fontSize: 13, fontWeight: 700, cursor: 'pointer',
+            }}>
+            + Créer une nouvelle note sur cette tâche
+          </button>
+        </div>
+      </div>
     </>
   )
 }
