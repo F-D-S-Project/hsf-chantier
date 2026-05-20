@@ -20,6 +20,8 @@ interface Props {
   highlightCompany?: string
   readOnly?: boolean
   authorName?: string
+  userRole?: 'admin' | 'company' | 'external'
+  userCompany?: string | null
   onUpdate: (id: string, patch: Partial<Intervention>) => void
   onAdd: (iv: Intervention) => void
 }
@@ -422,7 +424,7 @@ const modalSelectStyle: React.CSSProperties = {
 
 type MoveMode = { iv: Intervention; mode: 'move' | 'dup' } | null
 
-export default function PlanningScreen({ interventions, zones, trades, companies, highlightCompany, readOnly, authorName, onUpdate, onAdd }: Props) {
+export default function PlanningScreen({ interventions, zones, trades, companies, highlightCompany, readOnly, authorName, userRole = 'admin', userCompany = null, onUpdate, onAdd }: Props) {
   const [weekOffset, setWeekOffset] = useState(0)
   const [viewMode, setViewMode]     = useState<ViewMode>('1s')
   const [zoneFilter, setZoneFilter] = useState<string[]>([])
@@ -795,6 +797,8 @@ export default function PlanningScreen({ interventions, zones, trades, companies
           allInterventions={interventions}
           readOnly={readOnly}
           authorName={authorName}
+          userRole={userRole}
+          userCompany={userCompany}
           onClose={() => setSelectedId(null)}
           onUpdate={(patch) => {
             onUpdate(selectedIv.id, patch)

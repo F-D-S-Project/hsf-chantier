@@ -38,6 +38,7 @@ async function notifyForNewNote(note: Note, companies: Company[]) {
       recipient_role: 'company',
       recipient_company: companyName,
       intervention_id: note.intervention_id,
+      note_id: note.id,
       task_name: note.title?.slice(0, 80) ?? note.content.slice(0, 60),
       message: note.mentioned_companies?.includes(companyName)
         ? `💬 ${note.author_name} vous a mentionné·e dans une note`
@@ -66,6 +67,7 @@ async function notifyForReply(reply: Note, parent: Note, thread: Note[], compani
       recipient_role: isCompany ? 'company' : 'admin',
       recipient_company: isCompany ? name : null,
       intervention_id: parent.intervention_id,
+      note_id: parent.id,
       task_name: parent.title?.slice(0, 80) ?? parent.content.slice(0, 60),
       message: `💬 ${reply.author_name} a répondu à une note`,
       read: false,
@@ -136,9 +138,11 @@ interface Props {
   userId?: string
   userRole?: 'admin' | 'company' | 'external'
   userCompany?: string
+  initialNoteId?: string | null
+  onInitialNoteOpened?: () => void
 }
 
-export default function NotesScreen({ interventions, zones, trades, companies, authorName, userId, userRole, userCompany }: Props) {
+export default function NotesScreen({ interventions, zones, trades, companies, authorName, userId, userRole, userCompany, initialNoteId = null, onInitialNoteOpened }: Props) {
   const [notes,     setNotes]     = useState<Note[]>([])
   const [loading,   setLoading]   = useState(true)
   const [loadError, setLoadError] = useState<{ code?: string; message: string } | null>(null)
@@ -161,6 +165,15 @@ export default function NotesScreen({ interventions, zones, trades, companies, a
     setToast({ msg, kind })
     setTimeout(() => setToast(null), 3200)
   }
+
+  // Open the note pointed to by a notification (once notes are loaded)
+  useEffect(() => {
+    if (!initialNoteId || notes.length === 0) return
+    const exists = notes.some(n => n.id === initialNoteId)
+    if (!exists) return
+    setSelected(initialNoteId)
+    onInitialNoteOpened?.()
+  }, [initialNoteId, notes, onInitialNoteOpened])
 
   // Load + realtime
   useEffect(() => {
@@ -772,11 +785,13 @@ export function NoteFormModal({ mode, iv, zones, trades, companies, authorName, 
         const payload: Record<string, unknown> = isExternal ? {
           recipient_role: 'external',
           recipient_email: l.email,
+          note_id: noteRecord.id,
           task_name: noteRecord.title?.slice(0, 80) ?? noteRecord.content.slice(0, 60) ?? '—',
           message: `📝 Nouvelle note de ${noteRecord.author_name}`,
         } : {
           recipient_role: 'company',
           recipient_company: l.companyName ?? '',
+          note_id: noteRecord.id,
           task_name: noteRecord.title?.slice(0, 80) ?? noteRecord.content.slice(0, 60) ?? '—',
           message: `📝 Nouvelle note de ${noteRecord.author_name}`,
         }
@@ -2156,11 +2171,13 @@ function ResendModal({ note, attachments, companies, authorName, onClose, onToas
       const payload: Record<string, unknown> = isExternal ? {
         recipient_role: 'external',
         recipient_email: l.email,
+        note_id: note.id,
         task_name: note.title?.slice(0, 80) ?? note.content.slice(0, 60) ?? '—',
         message: `📢 Rappel : ${authorName}`,
       } : {
         recipient_role: 'company',
         recipient_company: l.companyName ?? '',
+        note_id: note.id,
         task_name: note.title?.slice(0, 80) ?? note.content.slice(0, 60) ?? '—',
         message: `📢 Rappel : ${authorName}`,
       }

@@ -349,6 +349,8 @@ export default function CompanyScreen({ companyName, interventions, zones, trade
           zones={zones} trades={trades} companies={companies} allInterventions={interventions}
           readOnly
           authorName={authorName}
+          userRole="company"
+          userCompany={companyName}
           onClose={() => setSelectedId(null)}
           onUpdate={(patch) => { onUpdate(selectedIv.id, patch); setSelectedId(null) }}
         />

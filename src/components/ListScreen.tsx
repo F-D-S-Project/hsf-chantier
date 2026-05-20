@@ -201,6 +201,7 @@ export default function ListScreen({ interventions, zones, trades, onUpdate }: P
           zones={zones}
           trades={trades}
           allInterventions={interventions}
+          userRole="admin"
           onClose={() => setSelectedId(null)}
           onUpdate={(patch) => {
             onUpdate(selectedIv.id, patch)

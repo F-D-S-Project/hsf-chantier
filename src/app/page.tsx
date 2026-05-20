@@ -40,6 +40,7 @@ interface AppNotification {
   recipient_company: string | null
   recipient_email: string | null
   intervention_id: string | null
+  note_id: string | null
   task_name: string | null
   message: string
   read: boolean
@@ -65,6 +66,7 @@ export default function PlanifyApp() {
   const [notifications, setNotifications]   = useState<AppNotification[]>([])
   const [showNotifs, setShowNotifs]         = useState(false)
   const [notesUnread, setNotesUnread]       = useState(0)
+  const [pendingNoteId, setPendingNoteId]   = useState<string | null>(null)
 
   useEffect(() => {
     Promise.all([
@@ -215,6 +217,7 @@ export default function PlanifyApp() {
               highlightCompany={userCompany}
               readOnly
               authorName={authorName}
+              userRole={userRole} userCompany={userCompany}
               onUpdate={handleUpdate} onAdd={handleAdd}
             />
           )}
@@ -223,10 +226,11 @@ export default function PlanifyApp() {
               interventions={interventions} zones={zones} trades={trades} companies={companies}
               authorName={authorName} userId={userId ?? undefined}
               userRole={userRole} userCompany={userCompany}
+              initialNoteId={pendingNoteId} onInitialNoteOpened={() => setPendingNoteId(null)}
             />
           )}
         </main>
-        {showNotifs && <NotifPanel notifications={notifications} onClose={() => setShowNotifs(false)} onNavigate={s => { setCoScreen(s === 'notes' ? 'notes' : s === 'planning' ? 'planning' : 'mytasks'); setShowNotifs(false) }} />}
+        {showNotifs && <NotifPanel notifications={notifications} onClose={() => setShowNotifs(false)} onNavigate={(s, noteId) => { setCoScreen(s === 'notes' ? 'notes' : s === 'planning' ? 'planning' : 'mytasks'); if (noteId) setPendingNoteId(noteId); setShowNotifs(false) }} />}
         <nav style={{ background: 'var(--surface)', borderTop: '1px solid var(--border)', display: 'flex', flexShrink: 0 }}>
           {([{ id: 'mytasks', label: 'Mes tâches', icon: '≡' }, { id: 'planning', label: 'Planning', icon: '▦' }, { id: 'notes', label: 'Notes', icon: '📝' }] as { id: CompanyScreen; label: string; icon: string }[]).map(item => {
             const active = coScreen === item.id
@@ -270,12 +274,13 @@ export default function PlanifyApp() {
         </header>
         <main style={{ flex: 1, overflow: 'hidden', position: 'relative' }}>
           {extScreen === 'dashboard' && (
-            <DashboardScreen zones={zones} interventions={interventions} trades={trades} companies={companies} authorName={authorName} onUpdate={handleUpdate} visibleBlocks={extPerms} />
+            <DashboardScreen zones={zones} interventions={interventions} trades={trades} companies={companies} authorName={authorName} onUpdate={handleUpdate} visibleBlocks={extPerms} userRole={userRole} userCompany={userCompany} />
           )}
           {extScreen === 'planning' && (
             <PlanningScreen
               interventions={interventions} zones={zones} trades={trades} companies={companies}
               readOnly authorName={authorName}
+              userRole={userRole} userCompany={userCompany}
               onUpdate={handleUpdate} onAdd={handleAdd}
             />
           )}
@@ -287,10 +292,11 @@ export default function PlanifyApp() {
               interventions={interventions} zones={zones} trades={trades} companies={companies}
               authorName={authorName} userId={userId ?? undefined}
               userRole={userRole}
+              initialNoteId={pendingNoteId} onInitialNoteOpened={() => setPendingNoteId(null)}
             />
           )}
         </main>
-        {showNotifs && <NotifPanel notifications={notifications} onClose={() => setShowNotifs(false)} onNavigate={s => { setExtScreen(s === 'notes' ? 'notes' : s === 'briefings' ? 'briefings' : s === 'dashboard' ? 'dashboard' : 'planning'); setShowNotifs(false) }} />}
+        {showNotifs && <NotifPanel notifications={notifications} onClose={() => setShowNotifs(false)} onNavigate={(s, noteId) => { setExtScreen(s === 'notes' ? 'notes' : s === 'briefings' ? 'briefings' : s === 'dashboard' ? 'dashboard' : 'planning'); if (noteId) setPendingNoteId(noteId); setShowNotifs(false) }} />}
         <nav style={{ background: 'var(--surface)', borderTop: '1px solid var(--border)', display: 'flex', flexShrink: 0 }}>
           {([{ id: 'dashboard', label: 'Dashboard', icon: '◉' }, { id: 'planning', label: 'Planning', icon: '▦' }, { id: 'briefings', label: 'Briefings', icon: '◎' }, { id: 'notes', label: 'Notes', icon: '📝' }] as { id: ExternalScreen; label: string; icon: string }[]).map(item => {
             const active = extScreen === item.id
@@ -316,14 +322,14 @@ export default function PlanifyApp() {
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
       <AppHeader screen={screen} onNavigate={setScreen} interventions={interventions} onLogout={handleLogout} unreadCount={unreadCount} onOpenNotifs={() => { setShowNotifs(true); handleMarkAllRead() }} authorName={authorName} />
       <main style={{ flex: 1, overflow: 'hidden', position: 'relative' }}>
-        {screen === 'dashboard' && <DashboardScreen zones={zones} interventions={interventions} trades={trades} companies={companies} authorName={authorName} onUpdate={handleUpdate} />}
+        {screen === 'dashboard' && <DashboardScreen zones={zones} interventions={interventions} trades={trades} companies={companies} authorName={authorName} onUpdate={handleUpdate} userRole={userRole} userCompany={userCompany} />}
         {screen === 'list' && <ListScreen interventions={interventions} zones={zones} trades={trades} onUpdate={handleUpdate} />}
-        {screen === 'planning' && <PlanningScreen interventions={interventions} zones={zones} trades={trades} companies={companies} onUpdate={handleUpdate} onAdd={handleAdd} />}
-        {screen === 'notes' && <NotesScreen interventions={interventions} zones={zones} trades={trades} companies={companies} authorName={authorName} userId={userId ?? undefined} userRole={userRole} userCompany={userCompany ?? undefined} />}
+        {screen === 'planning' && <PlanningScreen interventions={interventions} zones={zones} trades={trades} companies={companies} userRole={userRole} userCompany={userCompany} onUpdate={handleUpdate} onAdd={handleAdd} />}
+        {screen === 'notes' && <NotesScreen interventions={interventions} zones={zones} trades={trades} companies={companies} authorName={authorName} userId={userId ?? undefined} userRole={userRole} userCompany={userCompany ?? undefined} initialNoteId={pendingNoteId} onInitialNoteOpened={() => setPendingNoteId(null)} />}
         {screen === 'briefings' && <BriefingsScreen interventions={interventions} zones={zones} trades={trades} companies={companies} />}
         {screen === 'settings' && <SettingsScreen zones={zones} trades={trades} companies={companies} onZonesChange={setZones} onTradesChange={setTrades} onCompaniesChange={setCompanies} />}
       </main>
-      {showNotifs && <NotifPanel notifications={notifications} onClose={() => setShowNotifs(false)} onNavigate={s => { setScreen(s); setShowNotifs(false) }} />}
+      {showNotifs && <NotifPanel notifications={notifications} onClose={() => setShowNotifs(false)} onNavigate={(s, noteId) => { setScreen(s); if (noteId) setPendingNoteId(noteId); setShowNotifs(false) }} />}
       <BottomNav screen={screen} onNavigate={setScreen} notesUnread={notesUnread} />
     </div>
   )
@@ -354,7 +360,7 @@ function BellButton({ count, onClick }: { count: number; onClick: () => void }) 
 
 // ─── Notifications panel ──────────────────────────────────────────────────────
 
-function NotifPanel({ notifications, onClose, onNavigate }: { notifications: AppNotification[]; onClose: () => void; onNavigate: (s: Screen) => void }) {
+function NotifPanel({ notifications, onClose, onNavigate }: { notifications: AppNotification[]; onClose: () => void; onNavigate: (s: Screen, noteId?: string | null) => void }) {
   function fmtTime(iso: string) {
     const d = new Date(iso)
     const now = new Date()
@@ -386,7 +392,10 @@ function NotifPanel({ notifications, onClose, onNavigate }: { notifications: App
             <div style={{ textAlign: 'center', color: 'var(--muted)', fontSize: 13, padding: '32px 0' }}>Aucune notification</div>
           ) : notifications.map(n => (
             <div key={n.id}
-              onClick={() => onNavigate(n.message.startsWith('📢') ? 'notes' : 'list')}
+              onClick={() => {
+                if (n.note_id) onNavigate('notes', n.note_id)
+                else onNavigate(n.message.startsWith('📢') || n.message.startsWith('📝') || n.message.startsWith('💬') ? 'notes' : 'list')
+              }}
               style={{
                 padding: '11px 12px', marginBottom: 8, borderRadius: 'var(--r)',
                 background: n.read ? 'var(--surface-2)' : 'var(--primary-l)',
@@ -577,10 +586,12 @@ function BottomNav({ screen, onNavigate, notesUnread = 0 }: { screen: Screen; on
 
 // ─── Dashboard ────────────────────────────────────────────────────────────────
 
-function DashboardScreen({ zones, interventions, trades, companies, authorName, onUpdate, visibleBlocks }: {
+function DashboardScreen({ zones, interventions, trades, companies, authorName, onUpdate, visibleBlocks, userRole = 'admin', userCompany = null }: {
   zones: Zone[]; interventions: Intervention[]; trades: Trade[]; companies: Company[]; authorName: string
   onUpdate: (id: string, patch: Partial<Intervention>) => void
   visibleBlocks?: { sante: boolean; taches: boolean; trades: boolean; zones: boolean }
+  userRole?: 'admin' | 'company' | 'external'
+  userCompany?: string | null
 }) {
   const show = visibleBlocks ?? { sante: true, taches: true, trades: true, zones: true }
   const [selectedId, setSelectedId]       = useState<string | null>(null)
@@ -855,6 +866,8 @@ function DashboardScreen({ zones, interventions, trades, companies, authorName, 
           companies={companies}
           allInterventions={interventions}
           authorName={authorName}
+          userRole={userRole}
+          userCompany={userCompany}
           onClose={() => setSelectedId(null)}
           onUpdate={(patch) => { onUpdate(selectedIv.id, patch); setSelectedId(null) }}
         />

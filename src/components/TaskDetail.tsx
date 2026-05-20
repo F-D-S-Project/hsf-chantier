@@ -1,13 +1,16 @@
 'use client'
 
-import { useEffect, useState } from 'react'
-import type { Intervention, Zone, Trade, Company, Status } from '@/types/database'
+import { useEffect, useState, useCallback } from 'react'
+import type { Intervention, Zone, Trade, Company, Status, TaskChangeRequest } from '@/types/database'
 import { effectiveStatus } from '@/lib/progress'
 import { STATUS_META, STATUS_OPTIONS } from '@/constants/status'
 import { getTradeColor, getZoneFloorColor } from '@/constants/colors'
 import { fmtDate, daysOverdue } from '@/lib/dates'
 import { supabase } from '@/lib/supabase'
 import { NoteFormModal } from './NotesScreen'
+import ChangeRequestPanel, { type ChangeRequestSession, type ReviewAction } from './ChangeRequestPanel'
+import type { TaskChangeForm } from '@/constants/changeRequests'
+import { changedFieldsFromForm } from '@/lib/changeRequests'
 
 interface NoteEntry {
   id: string
@@ -24,13 +27,15 @@ interface Props {
   allInterventions: Intervention[]
   readOnly?: boolean
   authorName?: string
+  userRole?: 'admin' | 'company' | 'external'
+  userCompany?: string | null
   onClose: () => void
   onUpdate: (patch: Partial<Intervention>) => void
   onStartMove?: () => void
   onStartDuplicate?: () => void
 }
 
-export default function TaskDetail({ iv, zones, trades, companies = [], allInterventions, readOnly, authorName, onClose, onUpdate, onStartMove, onStartDuplicate }: Props) {
+export default function TaskDetail({ iv, zones, trades, companies = [], allInterventions, readOnly, authorName, userRole = 'admin', userCompany = null, onClose, onUpdate, onStartMove, onStartDuplicate }: Props) {
   const [showNoteForm, setShowNoteForm] = useState(false)
   const [noteCount,    setNoteCount]    = useState<number | null>(null)
 
@@ -65,6 +70,150 @@ export default function TaskDetail({ iv, zones, trades, companies = [], allInter
       .then(({ data }) => { if (data) setNotesList(data as NoteEntry[]) })
   }, [iv.id])
 
+  // ─── Change requests ───
+  const [changeRequests, setChangeRequests] = useState<TaskChangeRequest[]>([])
+  const [crBusy, setCrBusy] = useState(false)
+
+  useEffect(() => {
+    supabase
+      .from('task_change_requests')
+      .select('*')
+      .eq('task_id', iv.id)
+      .order('created_at', { ascending: false })
+      .then(({ data }) => { if (data) setChangeRequests(data as TaskChangeRequest[]) })
+  }, [iv.id])
+
+  const session: ChangeRequestSession =
+    userRole === 'admin'
+      ? { role: 'admin',    company_name: null,                user_name: authorName ?? null }
+      : userRole === 'company'
+      ? { role: 'company',  company_name: userCompany ?? '',   user_name: authorName ?? null }
+      : { role: 'external', company_name: userCompany ?? null, user_name: authorName ?? null }
+
+  const handleSubmitChangeRequest = useCallback(async (target: Intervention, form: TaskChangeForm) => {
+    if (session.role !== 'company' || session.company_name !== target.company) {
+      throw new Error('Vous ne pouvez modifier que les tâches de votre entreprise.')
+    }
+    if (!target.company_edit_allowed) {
+      throw new Error('Cette tâche n’a pas été ouverte à modification par l’admin.')
+    }
+    if (changeRequests.some(r => r.status === 'pending_admin')) {
+      throw new Error('Une demande est déjà en attente sur cette tâche.')
+    }
+    const changed = changedFieldsFromForm(target, form)
+    if (!changed.length) throw new Error('Aucune modification détectée.')
+
+    setCrBusy(true)
+    try {
+      const nowIso = new Date().toISOString()
+      const row = {
+        task_id: target.id,
+        task_number: target.task_number || '',
+        task_company: target.company || '',
+        requested_by_company: session.company_name,
+        requested_by_contact: session.user_name ?? '',
+        status: 'pending_admin' as const,
+        old_start_date: target.start_date || null,
+        old_end_date:   target.end_date   || target.start_date || null,
+        old_task:       target.task       || '',
+        old_prereq:     target.prereq     || '',
+        old_notes:      target.notes      || '',
+        new_start_date: form.start || null,
+        new_end_date:   form.end   || form.start || null,
+        new_task:       form.task   || '',
+        new_prereq:     form.prereq || '',
+        new_notes:      form.notes  || '',
+        created_at: nowIso,
+        updated_at: nowIso,
+        payload: {
+          changed_fields: changed.map(c => c.key),
+          company_edit_allowed: !!target.company_edit_allowed,
+          company_edit_start_min: target.company_edit_start_min ?? null,
+          company_edit_end_max:   target.company_edit_end_max   ?? null,
+        },
+      }
+      const { data, error } = await supabase
+        .from('task_change_requests')
+        .insert(row)
+        .select()
+        .single()
+      if (error) throw new Error(error.message)
+      if (data) setChangeRequests(prev => [data as TaskChangeRequest, ...prev])
+
+      // Notif → admin
+      await supabase.from('notifications').insert({
+        recipient_role: 'admin',
+        intervention_id: target.id,
+        task_name: target.task,
+        message: `Modification demandée par ${session.company_name} · ${target.task_number || target.task}`,
+      })
+    } finally {
+      setCrBusy(false)
+    }
+  }, [session, changeRequests])
+
+  const handleReviewChangeRequest = useCallback(async (
+    req: TaskChangeRequest,
+    action: ReviewAction,
+    form: TaskChangeForm,
+    comment: string,
+  ) => {
+    if (session.role !== 'admin') throw new Error('Action réservée à l’admin.')
+    setCrBusy(true)
+    try {
+      const nowIso = new Date().toISOString()
+      const isRefuse = action === 'refuse'
+      const newStatus = action === 'refuse' ? 'refused' : action === 'adjust' ? 'adjusted_accepted' : 'accepted'
+      const patch = {
+        status: newStatus,
+        admin_decision: action,
+        admin_comment: comment || null,
+        reviewed_by: session.user_name ?? 'Admin',
+        reviewed_at: nowIso,
+        final_start_date: isRefuse ? null : (form.start || null),
+        final_end_date:   isRefuse ? null : (form.end   || form.start || null),
+        final_task:       isRefuse ? null : (form.task   || ''),
+        final_prereq:     isRefuse ? null : (form.prereq || ''),
+        final_notes:      isRefuse ? null : (form.notes  || ''),
+        updated_at: nowIso,
+      }
+      const { data, error } = await supabase
+        .from('task_change_requests')
+        .update(patch)
+        .eq('id', req.id)
+        .select()
+        .single()
+      if (error) throw new Error(error.message)
+      if (data) setChangeRequests(prev => prev.map(r => r.id === req.id ? (data as TaskChangeRequest) : r))
+
+      if (!isRefuse) {
+        const ivPatch: Partial<Intervention> = {
+          start_date: form.start || null,
+          end_date:   form.end   || form.start || null,
+          task:       form.task   || iv.task,
+          prereq:     form.prereq || '',
+          notes:      form.notes  || '',
+        }
+        const { error: e2 } = await supabase.from('interventions').update(ivPatch).eq('id', iv.id)
+        if (!e2) onUpdate(ivPatch)
+      }
+
+      // Notif → entreprise demandeuse
+      const label = action === 'accept' ? 'acceptée' : action === 'adjust' ? 'ajustée puis validée' : 'refusée'
+      if (req.requested_by_company) {
+        await supabase.from('notifications').insert({
+          recipient_role: 'company',
+          recipient_company: req.requested_by_company,
+          intervention_id: iv.id,
+          task_name: iv.task,
+          message: `Votre demande de modification a été ${label}${comment ? ' · ' + comment : ''}`,
+        })
+      }
+    } finally {
+      setCrBusy(false)
+    }
+  }, [session, iv.id, iv.task, onUpdate])
+
   // Edit-mode fields
   const [editTask,      setEditTask]      = useState(iv.task ?? '')
   const [editZone,      setEditZone]      = useState(iv.zone ?? '')
@@ -74,6 +223,9 @@ export default function TaskDetail({ iv, zones, trades, companies = [], allInter
   const [editEndDate,   setEditEndDate]   = useState(iv.end_date ?? '')
   const [editOffDays,   setEditOffDays]   = useState<string[]>(iv.off_days ?? [])
   const [newOffDay,     setNewOffDay]     = useState('')
+  const [editCEAllowed, setEditCEAllowed] = useState<boolean>(!!iv.company_edit_allowed)
+  const [editCEMin,     setEditCEMin]     = useState<string>(iv.company_edit_start_min ?? '')
+  const [editCEMax,     setEditCEMax]     = useState<string>(iv.company_edit_end_max   ?? '')
 
   const zone  = zones.find(z => z.id === (editing ? editZone : iv.zone))
   const trade = trades.find(t => t.id === (editing ? editTrade : iv.trade))
@@ -89,6 +241,9 @@ export default function TaskDetail({ iv, zones, trades, companies = [], allInter
     ? editTask !== (iv.task ?? '') || editZone !== (iv.zone ?? '') || editTrade !== (iv.trade ?? '') ||
       editCompany !== (iv.company ?? '') || editStartDate !== (iv.start_date ?? '') || editEndDate !== (iv.end_date ?? '') ||
       JSON.stringify(editOffDays.slice().sort()) !== JSON.stringify((iv.off_days ?? []).slice().sort()) ||
+      editCEAllowed !== !!iv.company_edit_allowed ||
+      editCEMin !== (iv.company_edit_start_min ?? '') ||
+      editCEMax !== (iv.company_edit_end_max ?? '') ||
       status !== iv.status || notes !== (iv.notes ?? '')
     : status !== iv.status || notes !== (iv.notes ?? '')
 
@@ -101,7 +256,13 @@ export default function TaskDetail({ iv, zones, trades, companies = [], allInter
   async function handleSave() {
     setSaving(true)
     const patch: Partial<Intervention> = editing
-      ? { status, notes, task: editTask, zone: editZone, trade: editTrade, company: editCompany, start_date: editStartDate || null, end_date: editEndDate || null, off_days: editOffDays }
+      ? {
+          status, notes, task: editTask, zone: editZone, trade: editTrade, company: editCompany,
+          start_date: editStartDate || null, end_date: editEndDate || null, off_days: editOffDays,
+          company_edit_allowed:   editCEAllowed,
+          company_edit_start_min: editCEAllowed ? (editCEMin || null) : null,
+          company_edit_end_max:   editCEAllowed ? (editCEMax || null) : null,
+        }
       : { status, notes }
     const { error } = await supabase.from('interventions').update(patch).eq('id', iv.id)
     setSaving(false)
@@ -326,6 +487,35 @@ export default function TaskDetail({ iv, zones, trades, companies = [], allInter
                   <input type="date" value={editEndDate} onChange={e => setEditEndDate(e.target.value)} style={inputStyle} />
                 </div>
               </div>
+              {/* Modification entreprise (Change Requests) */}
+              <div style={{ border: '1px dashed var(--border)', borderRadius: 'var(--r-sm)', padding: 10, background: 'var(--surface-2)' }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+                  <input
+                    type="checkbox"
+                    checked={editCEAllowed}
+                    onChange={e => setEditCEAllowed(e.target.checked)}
+                  />
+                  <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--text)' }}>
+                    Autoriser l’entreprise à demander une modification
+                  </span>
+                </label>
+                {editCEAllowed && (
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginTop: 8 }}>
+                    <div>
+                      <label style={labelStyle}>Au plus tôt</label>
+                      <input type="date" value={editCEMin} max={editCEMax || undefined} onChange={e => setEditCEMin(e.target.value)} style={inputStyle} />
+                    </div>
+                    <div>
+                      <label style={labelStyle}>Au plus tard</label>
+                      <input type="date" value={editCEMax} min={editCEMin || undefined} onChange={e => setEditCEMax(e.target.value)} style={inputStyle} />
+                    </div>
+                  </div>
+                )}
+                <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 6, lineHeight: 1.4 }}>
+                  Si activé, l’entreprise verra un bouton « Demander une modification » sur cette tâche. Les dates min/max bornent les dates proposables.
+                </div>
+              </div>
+
               <div>
                 <label style={labelStyle}>Note interne</label>
                 <textarea
@@ -338,6 +528,16 @@ export default function TaskDetail({ iv, zones, trades, companies = [], allInter
               </div>
             </div>
           )}
+
+          {/* Change requests */}
+          <ChangeRequestPanel
+            iv={iv}
+            requests={changeRequests}
+            session={session}
+            busy={crBusy}
+            onSubmit={handleSubmitChangeRequest}
+            onReview={handleReviewChangeRequest}
+          />
 
           {/* Statut */}
           <div style={{ marginBottom: 14 }}>

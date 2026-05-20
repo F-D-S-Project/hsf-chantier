@@ -152,6 +152,46 @@ export interface Note {
   mentioned_companies?: string[]
 }
 
+export type ChangeRequestStatus = 'pending_admin' | 'accepted' | 'refused' | 'adjusted_accepted'
+
+export interface TaskChangeRequest {
+  id: string
+  task_id: string
+  task_number: string | null
+  task_company: string | null
+
+  requested_by_company: string | null
+  requested_by_contact: string | null
+
+  status: ChangeRequestStatus
+  admin_decision: string | null
+  admin_comment: string | null
+  reviewed_by: string | null
+  reviewed_at: string | null
+
+  old_start_date: string | null
+  old_end_date:   string | null
+  old_task:       string | null
+  old_prereq:     string | null
+  old_notes:      string | null
+
+  new_start_date: string | null
+  new_end_date:   string | null
+  new_task:       string | null
+  new_prereq:     string | null
+  new_notes:      string | null
+
+  final_start_date: string | null
+  final_end_date:   string | null
+  final_task:       string | null
+  final_prereq:     string | null
+  final_notes:      string | null
+
+  payload?: Record<string, unknown> | null
+  created_at: string
+  updated_at: string
+}
+
 export interface CompanyNotifPrefs {
   company_name:    string
   email_digest:    boolean
