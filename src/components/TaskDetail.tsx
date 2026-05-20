@@ -561,6 +561,33 @@ export default function TaskDetail({ iv, zones, trades, companies = [], allInter
                 Dépendances
               </div>
 
+              {canEditLinks && (
+                <label style={{
+                  display: 'flex', alignItems: 'center', gap: 8,
+                  padding: '8px 10px', marginBottom: 8,
+                  background: iv.is_critical ? 'rgba(220,38,38,.08)' : 'var(--surface-2)',
+                  border: `1px solid ${iv.is_critical ? 'rgba(220,38,38,.35)' : 'var(--border)'}`,
+                  borderRadius: 'var(--r-xs)', cursor: linkBusy ? 'wait' : 'pointer',
+                }}>
+                  <input
+                    type="checkbox"
+                    checked={!!iv.is_critical}
+                    disabled={linkBusy}
+                    onChange={async e => {
+                      const checked = e.target.checked
+                      setLinkBusy(true)
+                      const patch: Partial<Intervention> = { is_critical: checked }
+                      const { error } = await supabase.from('interventions').update(patch).eq('id', iv.id)
+                      setLinkBusy(false)
+                      if (!error) onUpdateOther?.(iv.id, patch)
+                    }}
+                  />
+                  <span style={{ fontSize: 12, fontWeight: 700, color: iv.is_critical ? '#991B1B' : 'var(--text)' }}>
+                    🔴 Cette tâche est sur le chemin critique
+                  </span>
+                </label>
+              )}
+
               <DepGroup
                 label="Cette tâche commence après"
                 items={predecessors}

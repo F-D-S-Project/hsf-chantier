@@ -874,8 +874,10 @@ export default function PlanningScreen({ interventions, zones, trades, companies
                               moveMode={!!moveMode}
                               highlightCompany={highlightCompany}
                               highlightedIds={highlightLinkedIds}
+                              moveSourceId={moveMode?.iv.id}
                               onClickTask={iv => linkPickMode ? completeLinkPick(iv) : setSelectedId(iv.id)}
                               onClickLinks={iv => triggerHighlight(iv)}
+                              onStartMove={readOnly ? undefined : iv => setMoveMode({ iv, mode: 'move' })}
                             />
                           ))}
                         </div>
@@ -942,7 +944,7 @@ export default function PlanningScreen({ interventions, zones, trades, companies
 
 // ─── Gantt lane row (planning view) ──────────────────────────────────────────
 
-function PlanLaneRow({ bars, days, today, trades, companies, isMulti, moveMode, highlightCompany, highlightedIds, onClickTask, onClickLinks }: {
+function PlanLaneRow({ bars, days, today, trades, companies, isMulti, moveMode, moveSourceId, highlightCompany, highlightedIds, onClickTask, onClickLinks, onStartMove }: {
   bars: PlanGanttBar[]
   days: string[]
   today: string
@@ -950,10 +952,12 @@ function PlanLaneRow({ bars, days, today, trades, companies, isMulti, moveMode, 
   companies: Company[]
   isMulti: boolean
   moveMode: boolean
+  moveSourceId?: string | null
   highlightCompany?: string
   highlightedIds?: Set<string>
   onClickTask: (iv: Intervention) => void
   onClickLinks?: (iv: Intervention) => void
+  onStartMove?: (iv: Intervention) => void
 }) {
   void today
   const n = days.length
@@ -992,6 +996,17 @@ function PlanLaneRow({ bars, days, today, trades, companies, isMulti, moveMode, 
                         + (bar.iv.successor_ids?.length   ?? 0)
                         + ((bar.iv.predecessor_ids?.length ?? 0) === 0 && bar.iv.predecessor_id ? 1 : 0)
         const isHighlighted = !!highlightedIds?.has(bar.iv.id)
+        const isMoveSource  = !!moveSourceId && moveSourceId === bar.iv.id
+        const isCritical    = !!bar.iv.is_critical
+        const hasDeps       = (bar.iv.predecessor_ids?.length ?? 0) > 0
+                           || (bar.iv.successor_ids?.length   ?? 0) > 0
+                           || !!bar.iv.predecessor_id
+        // Visual priority: moveSource > click-highlight (orange) > critical (red) > has-deps (blue) > default
+        const flagColor   = isHighlighted ? '#F59E0B' : isCritical ? '#DC2626' : (hasDeps ? '#2563EB' : null)
+        const flagShadow  = isHighlighted ? 'rgba(245,158,11,.35)'
+                          : isCritical    ? 'rgba(220,38,38,.30)'
+                          : hasDeps       ? 'rgba(37,99,235,.25)' : null
+        const flagged     = isHighlighted || isCritical || hasDeps
         return [(
           <div
             key={`t-${bar.iv.id}`}
@@ -999,7 +1014,7 @@ function PlanLaneRow({ bars, days, today, trades, companies, isMulti, moveMode, 
               gridColumn: `${bar.startCol + 1} / ${bar.endCol + 2}`,
               padding: isMulti ? '2px 2px' : '3px 3px',
               pointerEvents: moveMode ? 'none' : 'auto',
-              opacity: dimmed ? 0.25 : 1,
+              opacity: dimmed ? 0.25 : (moveMode && !isMoveSource ? 0.55 : 1),
               filter: dimmed ? 'grayscale(60%)' : undefined,
             }}
             onClick={moveMode ? undefined : e => { e.stopPropagation(); onClickTask(bar.iv) }}
@@ -1008,19 +1023,21 @@ function PlanLaneRow({ bars, days, today, trades, companies, isMulti, moveMode, 
               height: '100%',
               background: bg,
               borderRadius: bar.startsBeforeRange ? '0 4px 4px 0' : bar.endsAfterRange ? '4px 0 0 4px' : 4,
-              borderTopWidth: isHighlighted ? 2 : 1,
-              borderTopStyle: 'solid',
-              borderTopColor: isHighlighted ? '#F59E0B' : `${accent}25`,
-              borderRightWidth: isHighlighted ? 2 : 1,
-              borderRightStyle: 'solid',
-              borderRightColor: isHighlighted ? '#F59E0B' : `${accent}25`,
-              borderBottomWidth: isHighlighted ? 2 : 1,
-              borderBottomStyle: 'solid',
-              borderBottomColor: isHighlighted ? '#F59E0B' : `${accent}25`,
+              borderTopWidth: isMoveSource ? 2 : flagged ? 2 : 1,
+              borderTopStyle: isMoveSource ? 'dashed' : 'solid',
+              borderTopColor: isMoveSource ? '#3B82F6' : flagColor ?? `${accent}25`,
+              borderRightWidth: isMoveSource ? 2 : flagged ? 2 : 1,
+              borderRightStyle: isMoveSource ? 'dashed' : 'solid',
+              borderRightColor: isMoveSource ? '#3B82F6' : flagColor ?? `${accent}25`,
+              borderBottomWidth: isMoveSource ? 2 : flagged ? 2 : 1,
+              borderBottomStyle: isMoveSource ? 'dashed' : 'solid',
+              borderBottomColor: isMoveSource ? '#3B82F6' : flagColor ?? `${accent}25`,
               borderLeftWidth: 2.5,
-              borderLeftStyle: 'solid',
-              borderLeftColor: isHighlighted ? '#F59E0B' : accent,
-              boxShadow: isHighlighted ? '0 0 0 2px rgba(245,158,11,.35)' : undefined,
+              borderLeftStyle: isMoveSource ? 'dashed' : 'solid',
+              borderLeftColor: isMoveSource ? '#3B82F6' : flagColor ?? accent,
+              boxShadow: isMoveSource
+                ? '0 0 0 2px rgba(59,130,246,.35)'
+                : flagShadow ? `0 0 0 2px ${flagShadow}` : undefined,
               padding: isMulti ? '2px 5px' : '3px 7px',
               cursor: moveMode ? 'crosshair' : 'pointer',
               overflow: 'hidden',
@@ -1029,13 +1046,31 @@ function PlanLaneRow({ bars, days, today, trades, companies, isMulti, moveMode, 
               flexDirection: 'column',
               justifyContent: 'center',
               gap: 1,
-              transition: 'border-color .2s, box-shadow .2s',
+              transition: 'border-color .2s, box-shadow .2s, opacity .2s',
             }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
                 <div style={{ flex: 1, minWidth: 0, fontSize: isMulti ? 8 : 9.5, fontWeight: 800, color: accent, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', lineHeight: 1.2 }}>
                   {bar.iv.company}
                   {isAlert && <span style={{ marginLeft: 4, fontSize: isMulti ? 6.5 : 8, opacity: .85 }}>· {sm.label}</span>}
                 </div>
+                {onStartMove && !moveMode && (
+                  <button
+                    type="button"
+                    onClick={e => { e.stopPropagation(); onStartMove(bar.iv) }}
+                    title="Déplacer cette tâche"
+                    style={{
+                      flexShrink: 0,
+                      display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                      padding: '0 4px', borderRadius: 999,
+                      border: '1px solid #BFDBFE',
+                      background: '#EFF6FF', color: '#1D4ED8',
+                      fontSize: isMulti ? 8 : 9, fontWeight: 800,
+                      lineHeight: 1.4, cursor: 'pointer',
+                    }}
+                  >
+                    ↕
+                  </button>
+                )}
                 {linkCount > 0 && onClickLinks && (
                   <button
                     type="button"

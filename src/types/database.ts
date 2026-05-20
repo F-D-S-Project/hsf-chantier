@@ -51,6 +51,7 @@ export interface Intervention {
   impact?: string
   company_edit_start_min?: string | null
   company_edit_end_max?: string | null
+  is_critical?: boolean
   created_at?: string
   updated_at?: string
 }
