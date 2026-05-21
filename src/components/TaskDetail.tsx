@@ -9,6 +9,8 @@ import { fmtDate, daysOverdue, addDays, daysBetween } from '@/lib/dates'
 import { supabase } from '@/lib/supabase'
 import { NoteFormModal } from './NotesScreen'
 import ChangeRequestPanel, { type ChangeRequestSession, type ReviewAction } from './ChangeRequestPanel'
+import CompaniesPicker from './CompaniesPicker'
+import { pickFreshExternalColor } from '@/lib/company'
 import type { TaskChangeForm } from '@/constants/changeRequests'
 import { changedFieldsFromForm } from '@/lib/changeRequests'
 
@@ -45,9 +47,10 @@ interface Props {
   onOpenTask?: (taskId: string) => void
   onUpdateOther?: (id: string, patch: Partial<Intervention>) => void
   onStartPlanningPick?: (kind: 'predecessor' | 'successor') => void
+  onCompaniesChange?: (next: Company[]) => void
 }
 
-export default function TaskDetail({ iv, zones, trades, companies = [], allInterventions, readOnly, authorName, userRole = 'admin', userCompany = null, onClose, onUpdate, onStartMove, onStartDuplicate, onOpenNote, onOpenTask, onUpdateOther, onStartPlanningPick }: Props) {
+export default function TaskDetail({ iv, zones, trades, companies = [], allInterventions, readOnly, authorName, userRole = 'admin', userCompany = null, onClose, onUpdate, onStartMove, onStartDuplicate, onOpenNote, onOpenTask, onUpdateOther, onStartPlanningPick, onCompaniesChange }: Props) {
   const [showNoteForm, setShowNoteForm] = useState(false)
   const [showNotesList, setShowNotesList] = useState(false)
   const [taskNotes, setTaskNotes] = useState<TaskNoteSummary[]>([])
@@ -243,6 +246,11 @@ export default function TaskDetail({ iv, zones, trades, companies = [], allInter
   const [editZone,      setEditZone]      = useState(iv.zone ?? '')
   const [editTrade,     setEditTrade]     = useState(iv.trade ?? '')
   const [editCompany,   setEditCompany]   = useState(iv.company ?? '')
+  const [editCompanies, setEditCompanies] = useState<string[]>(() => {
+    const list = (iv.companies ?? []).filter(Boolean)
+    if (list.length > 0) return list
+    return iv.company ? [iv.company] : []
+  })
   const [editStartDate, setEditStartDate] = useState(iv.start_date ?? '')
   const [editEndDate,   setEditEndDate]   = useState(iv.end_date ?? '')
   const [editOffDays,   setEditOffDays]   = useState<string[]>(iv.off_days ?? [])
@@ -329,10 +337,14 @@ export default function TaskDetail({ iv, zones, trades, companies = [], allInter
     }
   }
 
+  const originalCompanies = (iv.companies ?? []).filter(Boolean).length > 0
+    ? (iv.companies ?? [])
+    : (iv.company ? [iv.company] : [])
   const hasChanges = editing
     ? editTask !== (iv.task ?? '') || editZone !== (iv.zone ?? '') || editTrade !== (iv.trade ?? '') ||
       editCompany !== (iv.company ?? '') || editStartDate !== (iv.start_date ?? '') || editEndDate !== (iv.end_date ?? '') ||
       JSON.stringify(editOffDays.slice().sort()) !== JSON.stringify((iv.off_days ?? []).slice().sort()) ||
+      JSON.stringify(editCompanies) !== JSON.stringify(originalCompanies) ||
       editCEAllowed !== !!iv.company_edit_allowed ||
       editCEMin !== (iv.company_edit_start_min ?? '') ||
       editCEMax !== (iv.company_edit_end_max ?? '') ||
@@ -355,7 +367,9 @@ export default function TaskDetail({ iv, zones, trades, companies = [], allInter
     setSaving(true)
     const patch: Partial<Intervention> = editing
       ? {
-          status, notes, task: editTask, zone: editZone, trade: editTrade, company: editCompany,
+          status, notes, task: editTask, zone: editZone, trade: editTrade,
+          company: editCompanies[0] ?? editCompany,
+          companies: editCompanies,
           start_date: editStartDate || null, end_date: editEndDate || null, off_days: editOffDays,
           company_edit_allowed:   editCEAllowed,
           company_edit_start_min: editCEAllowed ? (editCEMin || null) : null,
@@ -662,8 +676,27 @@ export default function TaskDetail({ iv, zones, trades, companies = [], allInter
                 </div>
               </div>
               <div>
-                <label style={labelStyle}>Entreprise</label>
-                <input value={editCompany} onChange={e => setEditCompany(e.target.value)} style={inputStyle} placeholder="Nom de l'entreprise" />
+                <label style={labelStyle}>Intervenants</label>
+                <CompaniesPicker
+                  value={editCompanies}
+                  onChange={(next) => { setEditCompanies(next); setEditCompany(next[0] ?? '') }}
+                  companies={companies}
+                  trades={trades}
+                  preferredTradeId={editTrade}
+                  onCreateExternal={async (name) => {
+                    const externals = companies.filter(c => c.is_external)
+                    const colorKey = pickFreshExternalColor(trades, externals)
+                    const row: Partial<Company> = {
+                      id: `co_ext_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+                      name, active: true, is_external: true, color: colorKey,
+                      trade_id: null, trade_ids: [],
+                    }
+                    const { data, error: err } = await supabase.from('companies').insert(row).select().single()
+                    if (err || !data) throw new Error(err?.message ?? 'Création impossible')
+                    onCompaniesChange?.([...companies, data as Company])
+                    return data as Company
+                  }}
+                />
               </div>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
                 <div>

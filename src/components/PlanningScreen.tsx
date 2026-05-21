@@ -7,8 +7,9 @@ import { STATUS_META } from '@/constants/status'
 import { getTradeColor, getZoneFloorColor } from '@/constants/colors'
 import { todayStr } from '@/lib/dates'
 import { supabase } from '@/lib/supabase'
-import { companyTradeIds, displayTradeId } from '@/lib/company'
+import { companyTradeIds, displayTradeId, ivCompanies, pickFreshExternalColor } from '@/lib/company'
 import TaskDetail from './TaskDetail'
+import CompaniesPicker from './CompaniesPicker'
 
 
 interface Props {
@@ -24,6 +25,7 @@ interface Props {
   onUpdate: (id: string, patch: Partial<Intervention>) => void
   onAdd: (iv: Intervention) => void
   onOpenNote?: (noteId: string) => void
+  onCompaniesChange?: (next: Company[]) => void
 }
 
 // ─── Date helpers ─────────────────────────────────────────────────────────────
@@ -206,13 +208,14 @@ interface AddTaskModalProps {
   defaultDate?: string
   onClose: () => void
   onAdd: (iv: Intervention) => void
+  onCompaniesChange?: (next: Company[]) => void
 }
 
-function AddTaskModal({ zones, trades, companies, defaultZone, defaultDate, onClose, onAdd }: AddTaskModalProps) {
+function AddTaskModal({ zones, trades, companies, defaultZone, defaultDate, onClose, onAdd, onCompaniesChange }: AddTaskModalProps) {
   const today = todayStr()
   const [zoneId,    setZoneId]    = useState(defaultZone ?? '')
   const [tradeId,   setTradeId]   = useState('')
-  const [company,   setCompany]   = useState('')
+  const [intervenants, setIntervenants] = useState<string[]>([])
   const [task,      setTask]      = useState('')
   const [startDate, setStartDate] = useState(defaultDate ?? today)
   const [endDate,   setEndDate]   = useState(defaultDate ?? today)
@@ -221,21 +224,40 @@ function AddTaskModal({ zones, trades, companies, defaultZone, defaultDate, onCl
 
   function handleTradeChange(newTradeId: string) {
     setTradeId(newTradeId)
-    setCompany('')
+  }
+
+  async function handleCreateExternal(name: string): Promise<Company> {
+    const externals = companies.filter(c => c.is_external)
+    const colorKey = pickFreshExternalColor(trades, externals)
+    const row: Partial<Company> = {
+      id: `co_ext_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+      name,
+      active: true,
+      is_external: true,
+      color: colorKey,
+      trade_id: null,
+      trade_ids: [],
+    }
+    const { data, error: err } = await supabase.from('companies').insert(row).select().single()
+    if (err || !data) throw new Error(err?.message ?? 'Création impossible')
+    const created = data as Company
+    onCompaniesChange?.([...companies, created])
+    return created
   }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     if (!zoneId)     { setError('Sélectionne une zone.'); return }
     if (!tradeId)    { setError('Sélectionne un corps de métier.'); return }
-    if (!company)    { setError('Sélectionne une entreprise.'); return }
+    if (intervenants.length === 0) { setError('Sélectionne au moins un intervenant.'); return }
     if (!task.trim()) { setError('La description est requise.'); return }
     setSaving(true)
     setError(null)
     const newIv = {
       id:         `iv_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
       trade:      tradeId,
-      company,
+      company:    intervenants[0],
+      companies:  intervenants,
       task:       task.trim(),
       task_number: '',
       zone:       zoneId,
@@ -304,45 +326,17 @@ function AddTaskModal({ zones, trades, companies, defaultZone, defaultDate, onCl
               </select>
             </div>
 
-            {/* Entreprise */}
+            {/* Intervenants */}
             <div>
-              <label style={modalLabelStyle}>Entreprise</label>
-              {(() => {
-                const matching = companies.filter(c => companyTradeIds(c).includes(tradeId))
-                const others   = companies.filter(c => !companyTradeIds(c).includes(tradeId))
-                const known    = company && companies.some(c => c.name === company)
-                return (
-                  <>
-                    <select
-                      value={known ? company : (company ? '__custom__' : '')}
-                      onChange={e => {
-                        if (e.target.value === '__custom__') { setCompany(''); return }
-                        setCompany(e.target.value)
-                      }}
-                      style={modalSelectStyle}
-                    >
-                      <option value="">— Sélectionner —</option>
-                      {matching.length > 0 && (
-                        <optgroup label={`Sur ce corps de métier (${matching.length})`}>
-                          {matching.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
-                        </optgroup>
-                      )}
-                      {others.length > 0 && (
-                        <optgroup label="Autres entreprises">
-                          {others.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
-                        </optgroup>
-                      )}
-                      <option value="__custom__">✎ Autre (saisie libre)…</option>
-                    </select>
-                    {!known && company !== '' && (
-                      <input
-                        type="text" value={company} onChange={e => setCompany(e.target.value)}
-                        placeholder="Nom de l'entreprise" style={{ ...modalInputStyle, marginTop: 6 }} autoFocus
-                      />
-                    )}
-                  </>
-                )
-              })()}
+              <label style={modalLabelStyle}>Intervenants</label>
+              <CompaniesPicker
+                value={intervenants}
+                onChange={setIntervenants}
+                companies={companies}
+                trades={trades}
+                preferredTradeId={tradeId}
+                onCreateExternal={handleCreateExternal}
+              />
             </div>
 
             {/* Description */}
@@ -424,7 +418,7 @@ const modalSelectStyle: React.CSSProperties = {
 
 type MoveMode = { iv: Intervention; mode: 'move' | 'dup' } | null
 
-export default function PlanningScreen({ interventions, zones, trades, companies, highlightCompany, readOnly, authorName, userRole = 'admin', userCompany = null, onUpdate, onAdd, onOpenNote }: Props) {
+export default function PlanningScreen({ interventions, zones, trades, companies, highlightCompany, readOnly, authorName, userRole = 'admin', userCompany = null, onUpdate, onAdd, onOpenNote, onCompaniesChange }: Props) {
   const [weekOffset, setWeekOffset] = useState(0)
   const [weeks, setWeeks]           = useState<number>(1)
   const [zoneFilter, setZoneFilter] = useState<string[]>([])
@@ -928,6 +922,7 @@ export default function PlanningScreen({ interventions, zones, trades, companies
           onOpenTask={(id) => setSelectedId(id)}
           onUpdateOther={onUpdate}
           onStartPlanningPick={(kind) => { setLinkPickMode({ kind, sourceTaskId: selectedIv.id }); setSelectedId(null) }}
+          onCompaniesChange={onCompaniesChange}
           onClose={() => setSelectedId(null)}
           onUpdate={(patch) => {
             onUpdate(selectedIv.id, patch)
@@ -954,6 +949,7 @@ export default function PlanningScreen({ interventions, zones, trades, companies
           defaultDate={addDefaults.date}
           onClose={() => setShowAdd(false)}
           onAdd={onAdd}
+          onCompaniesChange={onCompaniesChange}
         />
       )}
     </div>
@@ -1000,15 +996,18 @@ function PlanLaneRow({ bars, days, today, trades, companies, isMulti, moveMode, 
           ))
         }
         const { bar } = seg
+        const intervenants = ivCompanies(bar.iv)
         const co      = companies.find(c => c.name === bar.iv.company)
         const tr      = trades.find(t => t.id === displayTradeId(co, bar.iv.trade))
-        const tc      = getTradeColor(tr?.color ?? 'blue')
+        // If the primary company is external with its own color, use it; else fall back to trade color
+        const colorKey = (co?.is_external && co.color) ? co.color : (tr?.color ?? 'blue')
+        const tc      = getTradeColor(colorKey)
         const es      = effectiveStatus(bar.iv)
         const sm      = STATUS_META[es]
         const isAlert = es === 'en_retard' || es === 'bloque'
         const accent  = isAlert ? sm.dot : tc.b
         const bg      = isAlert ? sm.bg  : tc.bg
-        const dimmed  = !!highlightCompany && bar.iv.company !== highlightCompany
+        const dimmed  = !!highlightCompany && !intervenants.includes(highlightCompany)
 
         const linkCount = (bar.iv.predecessor_ids?.length ?? 0)
                         + (bar.iv.successor_ids?.length   ?? 0)
@@ -1068,7 +1067,7 @@ function PlanLaneRow({ bars, days, today, trades, companies, isMulti, moveMode, 
             }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
                 <div style={{ flex: 1, minWidth: 0, fontSize: isMulti ? 9 : 9.5, fontWeight: 800, color: accent, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', lineHeight: 1.2 }}>
-                  {bar.iv.company}
+                  {intervenants.join(' + ')}
                   {isAlert && <span style={{ marginLeft: 4, fontSize: isMulti ? 7 : 8, opacity: .85 }}>· {sm.label}</span>}
                 </div>
                 {onStartMove && !moveMode && (

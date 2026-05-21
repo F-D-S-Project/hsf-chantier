@@ -52,6 +52,7 @@ export interface Intervention {
   company_edit_start_min?: string | null
   company_edit_end_max?: string | null
   is_critical?: boolean
+  companies?: string[]
   created_at?: string
   updated_at?: string
 }
@@ -68,6 +69,8 @@ export interface Company {
   contacts: { name: string; phone: string; email: string }[]
   active: boolean
   display_order?: number
+  is_external?: boolean
+  color?: string | null
 }
 
 export interface TaskLog {
