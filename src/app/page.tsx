@@ -611,8 +611,9 @@ function DashboardScreen({ zones, interventions, trades, companies, authorName, 
   const enRetard = interventions.filter(iv => effectiveStatus(iv) === 'en_retard').length
 
   const today = new Date(); today.setHours(0, 0, 0, 0)
-  const tasksDue  = interventions.filter(iv => { const e = iv.end_date ?? iv.start_date; return e && new Date(e + 'T00:00:00') <= today }).length
-  const tasksDone = interventions.filter(iv => { const e = iv.end_date ?? iv.start_date; return e && new Date(e + 'T00:00:00') <= today && iv.status === 'termine' }).length
+  // Aligned with "en retard" criterion (lib/progress.ts): a task is "due" only if its deadline is strictly before today.
+  const tasksDue  = interventions.filter(iv => { const e = iv.end_date ?? iv.start_date; return e && new Date(e + 'T00:00:00') < today }).length
+  const tasksDone = interventions.filter(iv => { const e = iv.end_date ?? iv.start_date; return e && new Date(e + 'T00:00:00') < today && iv.status === 'termine' }).length
 
   const selectedIv = selectedId ? interventions.find(iv => iv.id === selectedId) ?? null : null
 

@@ -101,9 +101,11 @@ export function computeProjectHealth(data: Intervention[], zones: Zone[]): Proje
   const cadenceCible   = theoWeight   > 0 ? Math.round(totalTheo      / theoWeight)   : 0
   const derive         = avancementReel - cadenceCible
 
+  // "Dues" = tasks whose deadline is strictly before today (same criterion as "en retard").
+  // A task with end_date = today still has the day to finish — it shouldn't drag the reliability down.
   const tasksDue  = data.filter(iv => {
     const e = iv.end_date ?? iv.start_date
-    return e && new Date(e + 'T00:00:00') <= today
+    return e && new Date(e + 'T00:00:00') < today
   })
   const tasksDone = tasksDue.filter(iv => iv.status === 'termine')
   const fiabilite = tasksDue.length > 0 ? Math.round(tasksDone.length / tasksDue.length * 100) : 100
